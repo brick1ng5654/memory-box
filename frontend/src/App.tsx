@@ -23,16 +23,19 @@ function BoardCanvas() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [selected, setSelected] = useState<MemoryNode | null>(null)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [selectedEdgeIds, setSelectedEdgeIds] = useState<number[]>([])
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true)
   const [lightbox, setLightbox] = useState<{ assets: Asset[]; index: number } | null>(null)
   const [deleteDialog, setDeleteDialog] = useState(false)
   const [clipboard, setClipboard] = useState<MemoryNode | null>(null)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId?: number } | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId?: number; nodeIds?: number[]; edgeIds?: number[] } | null>(null)
   const [zoom, setZoom] = useState(1)
   const confirmButton = useRef<HTMLButtonElement>(null)
   const nodesRef = useRef(nodes)
   const selectionRef = useRef<number[]>([])
+  const edgeSelectionRef = useRef<number[]>([])
+  const contextSelectionRef = useRef<{ nodeIds: number[]; edgeIds: number[] }>({ nodeIds: [], edgeIds: [] })
   const zoomRef = useRef(1)
 
   const openMedia = useCallback((assets: Asset[], index: number) => setLightbox({ assets, index }), [])
@@ -62,11 +65,21 @@ function BoardCanvas() {
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && selected) { event.preventDefault(); setClipboard(selected); return }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v' && clipboard) { event.preventDefault(); void duplicate(clipboard); return }
+      if (event.key === 'Delete' && selectedEdgeIds.length) {
+        event.preventDefault()
+        const ids = new Set(selectedEdgeIds)
+        void Promise.all([...ids].map(id => api.deleteEdge(id))).then(() => {
+          setEdges(current => current.filter(edge => !ids.has(Number(edge.id))))
+          setBoard(current => current ? { ...current, edges: current.edges.filter(edge => !ids.has(edge.id)) } : current)
+          setSelectedEdgeIds([])
+        }).catch(error => setNotice(error instanceof Error ? error.message : 'Не удалось удалить связь'))
+        return
+      }
       if (event.key === 'Delete' && selectedIds.length) { event.preventDefault(); setDeleteDialog(true) }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [lightbox, selected, selectedIds, clipboard])
+  }, [lightbox, selected, selectedIds, selectedEdgeIds, clipboard, setEdges])
 
   const replaceNode = useCallback((updated: MemoryNode) => {
     setNodes(list => list.map(node => node.id === String(updated.id) ? {
@@ -105,15 +118,25 @@ function BoardCanvas() {
       setBoard(current => current ? { ...current, edges: [...current.edges, saved] } : current)
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось создать связь') }
   }, [board, setEdges])
+  const setConnectionHandles = useCallback((isConnecting: boolean) => {
+    setNodes(current => current.map(node => ({ ...node, data: { ...node.data, isConnecting } })))
+  }, [setNodes])
   const onEdgesDelete = useCallback(async (deleted: Edge[]) => {
     await Promise.all(deleted.map(edge => api.deleteEdge(Number(edge.id))))
+    setEdges(current => current.filter(edge => !deleted.some(item => Number(item.id) === Number(edge.id))))
     setBoard(current => current ? { ...current, edges: current.edges.filter(edge => !deleted.some(item => Number(item.id) === edge.id)) } : current)
-  }, [])
-  const onSelectionChange = useCallback(({ nodes: selection }: { nodes: FlowMemoryNode[] }) => {
+    setSelectedEdgeIds([])
+  }, [setEdges])
+  const onSelectionChange = useCallback(({ nodes: selection, edges: edgeSelection }: { nodes: FlowMemoryNode[]; edges: Edge[] }) => {
     const ids = selection.map(node => Number(node.id))
-    if (ids.length === selectionRef.current.length && ids.every((id, index) => id === selectionRef.current[index])) return
+    const edgeIds = edgeSelection.map(edge => Number(edge.id))
+    const sameNodes = ids.length === selectionRef.current.length && ids.every((id, index) => id === selectionRef.current[index])
+    const sameEdges = edgeIds.length === edgeSelectionRef.current.length && edgeIds.every((id, index) => id === edgeSelectionRef.current[index])
+    if (sameNodes && sameEdges) return
     selectionRef.current = ids
+    edgeSelectionRef.current = edgeIds
     setSelectedIds(ids)
+    setSelectedEdgeIds(edgeIds)
     setSelected(ids.length === 1 ? selection[0].data : null)
   }, [])
   const create = async (type: NodeType, position?: { x: number; y: number }, source?: MemoryNode) => {
@@ -158,10 +181,15 @@ function BoardCanvas() {
     setSelected(null); setSelectedIds([])
   }
   const duplicate = async (source: MemoryNode) => create(source.type, { x: source.position_x + 40, y: source.position_y + 40 }, source)
-  const openContextMenu = (event: { preventDefault: () => void; stopPropagation: () => void; clientX: number; clientY: number }, nodeId?: number) => {
+  const openContextMenu = (event: { preventDefault: () => void; stopPropagation: () => void; clientX: number; clientY: number }, nodeId?: number, edgeIds?: number[]) => {
     event.preventDefault(); event.stopPropagation()
-    if (nodeId) { const node = board?.nodes.find(item => item.id === nodeId) || null; setSelected(node); setSelectedIds([nodeId]) }
-    setContextMenu({ x: event.clientX, y: event.clientY, nodeId })
+    const activeNodeIds = contextSelectionRef.current.nodeIds.length ? contextSelectionRef.current.nodeIds : selectionRef.current
+    const activeEdgeIds = contextSelectionRef.current.edgeIds.length ? contextSelectionRef.current.edgeIds : edgeSelectionRef.current
+    const nodeIds = nodeId && activeNodeIds.length > 1 && activeNodeIds.includes(nodeId) ? activeNodeIds : nodeId ? [nodeId] : activeNodeIds.length > 1 ? activeNodeIds : undefined
+    const contextEdgeIds = edgeIds?.length && activeEdgeIds.length > 1 && edgeIds.some(id => activeEdgeIds.includes(id)) ? activeEdgeIds : edgeIds
+    if (nodeId && nodeIds?.length === 1) { const node = board?.nodes.find(item => item.id === nodeId) || null; setSelected(node); setSelectedIds([nodeId]); setSelectedEdgeIds([]) }
+    if (contextEdgeIds?.length) { setSelected(null); setSelectedIds([]); setSelectedEdgeIds(contextEdgeIds) }
+    setContextMenu({ x: event.clientX, y: event.clientY, nodeId, nodeIds, edgeIds: contextEdgeIds })
   }
   const removeAsset = async (asset: Asset) => {
     if (!selected) return
@@ -198,14 +226,14 @@ function BoardCanvas() {
   return <main className="app" onClick={() => setContextMenu(null)}>
     <header><div><p className="eyebrow">ЛИЧНЫЙ ХОЛСТ</p><input aria-label="Название доски" value={board.title} onChange={event => setBoard({ ...board, title: event.target.value })} onBlur={async () => { try { await api.renameBoard(board.id, board.title) } catch { setNotice('Не удалось сохранить название') } }} /></div></header>
     {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
-    <section className="canvas-wrap">
-      <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onSelectionChange={onSelectionChange} onNodeClick={(_, node) => { setSelected(node.data); setSelectedIds([Number(node.id)]) }} onNodeContextMenu={(event, node) => openContextMenu(event, Number(node.id))} onPaneContextMenu={event => openContextMenu(event)} onPaneClick={() => { setSelected(null); setSelectedIds([]) }} onNodeDragStop={(_, node) => void syncNode(node.id, { position_x: node.position.x, position_y: node.position.y })} onConnect={onConnect} onMove={(_, viewport) => { if (Math.abs(viewport.zoom - zoomRef.current) >= 0.02) { zoomRef.current = viewport.zoom; setZoom(viewport.zoom) } }} nodeTypes={nodeTypes} deleteKeyCode={null} proOptions={{ hideAttribution: true }} onlyRenderVisibleElements fitView minZoom={0.2} maxZoom={2} defaultEdgeOptions={{ type: 'bezier' }}>
+    <section className="canvas-wrap" onMouseDownCapture={event => { if (event.button === 2) contextSelectionRef.current = { nodeIds: nodes.filter(node => node.selected).map(node => Number(node.id)), edgeIds: edges.filter(edge => edge.selected).map(edge => Number(edge.id)) } }} onContextMenuCapture={event => { const target = event.target as HTMLElement; const nodeElement = target.closest<HTMLElement>('.react-flow__node'); const edgeElement = target.closest<HTMLElement>('.react-flow__edge'); const nodeId = Number(nodeElement?.dataset.id); const edgeId = Number(edgeElement?.dataset.id); openContextMenu(event, Number.isFinite(nodeId) ? nodeId : undefined, Number.isFinite(edgeId) ? [edgeId] : undefined) }}>
+      <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onSelectionChange={onSelectionChange} onNodeClick={(_, node) => { setSelected(node.data); setSelectedIds([Number(node.id)]); setSelectedEdgeIds([]) }} onEdgeClick={(_, edge) => { setSelectedEdgeIds([Number(edge.id)]); setSelected(null); setSelectedIds([]) }} onNodeContextMenu={(event, node) => openContextMenu(event, Number(node.id))} onEdgeContextMenu={(event, edge) => { const id = Number(edge.id); openContextMenu(event, undefined, selectedEdgeIds.length > 1 && selectedEdgeIds.includes(id) ? selectedEdgeIds : [id]) }} onPaneContextMenu={event => openContextMenu(event)} onPaneClick={() => { setSelected(null); setSelectedIds([]); setSelectedEdgeIds([]) }} onNodeDragStop={(_, node) => void syncNode(node.id, { position_x: node.position.x, position_y: node.position.y })} onConnectStart={() => setConnectionHandles(true)} onConnectEnd={() => setConnectionHandles(false)} onConnect={onConnect} onMove={(_, viewport) => { if (Math.abs(viewport.zoom - zoomRef.current) >= 0.02) { zoomRef.current = viewport.zoom; setZoom(viewport.zoom) } }} nodeTypes={nodeTypes} deleteKeyCode={null} connectionRadius={32} proOptions={{ hideAttribution: true }} onlyRenderVisibleElements fitView minZoom={0.2} maxZoom={2} defaultEdgeOptions={{ type: 'bezier' }}>
         <Background variant={BackgroundVariant.Dots} color="#484252" gap={20} size={dotSize} />
       </ReactFlow>
       <div className="timeline"><span>Июль {board.year}</span><div>{days.map(day => <i key={day}>{day}</i>)}</div></div>
     </section>
     <Editor node={selected} boardYear={board.year} boardMonth={board.month} onClose={closeEditor} onSave={save} onRequestDelete={() => setDeleteDialog(true)} onDeleteAsset={removeAsset} onUpdateAsset={updateAsset} onReorderAssets={reorderAssets} onPreview={preview} onCreate={create} />
-    {contextMenu && <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}>{contextMenu.nodeId ? <><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) setClipboard(node); setContextMenu(null) }}>Копировать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) { setClipboard(node); setSelectedIds([node.id]); void remove() } setContextMenu(null) }}>Вырезать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) void duplicate(node); setContextMenu(null) }}>Дублировать</button></> : <><p>Создать</p>{(['note', 'media', 'track'] as NodeType[]).map(type => <button key={type} onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(type, point); setContextMenu(null) }}>{type === 'note' ? 'Заметку' : type === 'media' ? 'Медиа' : 'Музыку'}</button>)}</>}</div>}
+    {contextMenu && <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}>{contextMenu.edgeIds?.length ? <><p>{contextMenu.edgeIds.length > 1 ? 'Связи' : 'Связь'}</p><button className="context-danger" onClick={() => { void onEdgesDelete(edges.filter(edge => contextMenu.edgeIds?.includes(Number(edge.id)))); setContextMenu(null) }}>Удалить {contextMenu.edgeIds.length > 1 ? 'связи' : 'связь'}</button></> : contextMenu.nodeIds && contextMenu.nodeIds.length > 1 ? <><p>Выбрано: {contextMenu.nodeIds.length}</p><button className="context-danger" onClick={() => { setDeleteDialog(true); setContextMenu(null) }}>Удалить выбранные</button></> : contextMenu.nodeId ? <><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) setClipboard(node); setContextMenu(null) }}>Копировать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) { setClipboard(node); setSelectedIds([node.id]); void remove() } setContextMenu(null) }}>Вырезать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) void duplicate(node); setContextMenu(null) }}>Дублировать</button></> : <>{clipboard && <button onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(clipboard.type, point, clipboard); setContextMenu(null) }}>Вставить</button>}<p>Создать</p>{(['note', 'media', 'track'] as NodeType[]).map(type => <button key={type} onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(type, point); setContextMenu(null) }}>{type === 'note' ? 'Заметку' : type === 'media' ? 'Медиа' : 'Музыку'}</button>)}</>}</div>}
     {deleteDialog && selectedIds.length > 0 && <div className="confirm-backdrop"><div className="confirm-dialog"><p className="eyebrow">Удаление</p><h2>Удалить {selectedIds.length > 1 ? 'выбранные воспоминания' : 'воспоминание'}?</h2><p>Карточки, их файлы и связи будут удалены.</p><div><button onClick={() => setDeleteDialog(false)}>Отмена</button><button ref={confirmButton} className="confirm-delete" onClick={() => { setDeleteDialog(false); void remove() }}>Подтвердить</button></div></div></div>}
     {activeAsset && <div className="lightbox" onClick={() => setLightbox(null)}><button className="lightbox-close" onClick={() => setLightbox(null)}>×</button>{lightbox.assets.length > 1 && <button className="lightbox-nav prev" onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index: (current.index - 1 + current.assets.length) % current.assets.length } : current) }}>‹</button>}<div className="lightbox-content" onClick={event => event.stopPropagation()} key={activeAsset.id}>{activeAsset.mime_type.startsWith('image/') ? <img src={mediaUrl(activeAsset.storage_path)} alt={activeAsset.original_filename} /> : <video src={mediaUrl(activeAsset.storage_path)} controls autoPlay />}</div>{lightbox.assets.length > 1 && <button className="lightbox-nav next" onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index: (current.index + 1) % current.assets.length } : current) }}>›</button>}<div className="lightbox-footer"><p>{activeAsset.original_filename} {lightbox.assets.length > 1 && `• ${lightbox.index + 1}/${lightbox.assets.length}`}</p>{lightbox.assets.length > 1 && <div className="lightbox-thumbs">{lightbox.assets.map((asset, index) => <button key={asset.id} className={index === lightbox.index ? 'active' : ''} onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index } : current) }}>{asset.mime_type.startsWith('image/') ? <img src={mediaUrl(asset.preview_path || asset.storage_path)} alt={asset.original_filename} /> : <video src={mediaUrl(asset.storage_path)} muted preload="metadata" />}</button>)}</div>}</div></div>}
   </main>
