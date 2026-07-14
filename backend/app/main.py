@@ -1,0 +1,252 @@
+import os
+import uuid
+import json
+import base64
+import time
+from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from PIL import Image, UnidentifiedImageError
+from sqlalchemy import select
+from sqlalchemy.orm import Session, joinedload
+
+from .database import Base, engine, get_db
+from .models import Board, MediaAsset, MemoryEdge, MemoryNode, NodeType, TrackData
+from .schemas import BoardDetail, BoardRead, BoardUpdate, EdgeCreate, EdgeRead, MediaAssetRead, MediaAssetUpdate, NodeCreate, NodeRead, NodeUpdate, SpotifyTrackSearchResult
+
+MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", "./uploads"))
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", 100 * 1024 * 1024))
+ALLOWED_MEDIA = {"image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4", "video/webm", "video/quicktime"}
+MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+
+app = FastAPI(title="MemoryBox API", version="0.1.0")
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+spotify_token: str | None = None
+spotify_token_expires_at = 0.0
+
+
+def initialise():
+    MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+    Base.metadata.create_all(bind=engine)
+    with Session(engine) as db:
+        if not db.scalar(select(Board.id).limit(1)):
+            db.add(Board(title="Июль 2026", year=2026, month=7))
+            db.commit()
+
+
+@app.on_event("startup")
+def startup():
+    initialise()
+
+
+app.mount("/media", StaticFiles(directory=str(MEDIA_ROOT)), name="media")
+
+
+def board_or_404(board_id: int, db: Session) -> Board:
+    board = db.get(Board, board_id)
+    if not board:
+        raise HTTPException(404, "Доска не найдена")
+    return board
+
+
+def node_or_404(node_id: int, db: Session) -> MemoryNode:
+    node = db.execute(select(MemoryNode).options(joinedload(MemoryNode.media_assets), joinedload(MemoryNode.track_data)).where(MemoryNode.id == node_id)).unique().scalar_one_or_none()
+    if not node:
+        raise HTTPException(404, "Узел не найден")
+    return node
+
+
+def spotify_access_token() -> str:
+    global spotify_token, spotify_token_expires_at
+    if spotify_token and time.time() < spotify_token_expires_at:
+        return spotify_token
+    client_id = os.getenv("SPOTIFY_CLIENT_ID")
+    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise HTTPException(503, "Добавьте SPOTIFY_CLIENT_ID и SPOTIFY_CLIENT_SECRET в .env и перезапустите Docker Compose")
+    try:
+        credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+        request = Request("https://accounts.spotify.com/api/token", data=b"grant_type=client_credentials", method="POST", headers={"Authorization": f"Basic {credentials}", "Content-Type": "application/x-www-form-urlencoded"})
+        with urlopen(request, timeout=4) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        spotify_token = payload["access_token"]
+        spotify_token_expires_at = time.time() + max(int(payload.get("expires_in", 3600)) - 60, 60)
+        return spotify_token
+    except (HTTPError, URLError, KeyError, ValueError):
+        raise HTTPException(502, "Spotify не выдал токен. Проверьте ключи приложения и подключение к интернету")
+
+
+@app.get("/api/spotify/search", response_model=list[SpotifyTrackSearchResult])
+def search_spotify_tracks(query: str = Query(min_length=2, max_length=200)):
+    global spotify_token, spotify_token_expires_at
+    token = spotify_access_token()
+    endpoint = f"https://api.spotify.com/v1/search?{urlencode({'q': query, 'type': 'track', 'limit': 5})}"
+    try:
+        request = Request(endpoint, headers={"Authorization": f"Bearer {token}"})
+        with urlopen(request, timeout=5) as response:
+            items = json.loads(response.read().decode("utf-8")).get("tracks", {}).get("items", [])
+    except HTTPError as error:
+        if error.code == 401:
+            spotify_token = None; spotify_token_expires_at = 0
+        raise HTTPException(502, "Spotify временно недоступен. Попробуйте ещё раз")
+    except (URLError, ValueError):
+        raise HTTPException(502, "Не удалось выполнить поиск в Spotify")
+    return [SpotifyTrackSearchResult(id=item["id"], title=item["name"], artist=", ".join(artist["name"] for artist in item.get("artists", [])), cover_url=(item.get("album", {}).get("images") or [{}])[0].get("url")) for item in items]
+
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/api/board", response_model=BoardDetail)
+def get_primary_board(db: Session = Depends(get_db)):
+    statement = select(Board).options(joinedload(Board.nodes).joinedload(MemoryNode.media_assets), joinedload(Board.nodes).joinedload(MemoryNode.track_data), joinedload(Board.edges)).limit(1)
+    board = db.execute(statement).unique().scalar_one_or_none()
+    if not board:
+        initialise()
+        board = db.execute(statement).unique().scalar_one_or_none()
+    return board
+
+
+@app.patch("/api/boards/{board_id}", response_model=BoardRead)
+def update_board(board_id: int, payload: BoardUpdate, db: Session = Depends(get_db)):
+    board = board_or_404(board_id, db)
+    board.title = payload.title
+    db.commit(); db.refresh(board)
+    return board
+
+
+@app.post("/api/boards/{board_id}/nodes", response_model=NodeRead, status_code=status.HTTP_201_CREATED)
+def create_node(board_id: int, payload: NodeCreate, db: Session = Depends(get_db)):
+    board_or_404(board_id, db)
+    node = MemoryNode(board_id=board_id, type=payload.type, title=payload.title, text_content=payload.text_content, position_x=payload.position_x, position_y=payload.position_y, width=payload.width, height=payload.height, temporal_date=payload.temporal_date)
+    if payload.type == NodeType.track:
+        track = payload.track_data or {"title": payload.title}
+        node.track_data = TrackData(**(track.model_dump() if hasattr(track, "model_dump") else track))
+    db.add(node); db.commit()
+    return node_or_404(node.id, db)
+
+
+@app.patch("/api/nodes/{node_id}", response_model=NodeRead)
+def update_node(node_id: int, payload: NodeUpdate, db: Session = Depends(get_db)):
+    node = node_or_404(node_id, db)
+    for field in ("title", "text_content", "position_x", "position_y", "width", "height", "temporal_date"):
+        if field in payload.model_fields_set:
+            setattr(node, field, getattr(payload, field))
+    if payload.track_data is not None:
+        if node.type != NodeType.track:
+            raise HTTPException(400, "Данные трека допустимы только для узла типа track")
+        if not node.track_data:
+            node.track_data = TrackData(node_id=node.id)
+        for key, value in payload.track_data.model_dump().items():
+            setattr(node.track_data, key, value)
+    db.commit()
+    return node_or_404(node.id, db)
+
+
+@app.get("/api/nodes/{node_id}", response_model=NodeRead)
+def get_node(node_id: int, db: Session = Depends(get_db)):
+    return node_or_404(node_id, db)
+
+
+@app.delete("/api/nodes/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_node(node_id: int, db: Session = Depends(get_db)):
+    node = node_or_404(node_id, db)
+    for asset in node.media_assets:
+        for file_path in (asset.storage_path, asset.preview_path):
+            if file_path:
+                (MEDIA_ROOT / file_path).unlink(missing_ok=True)
+    db.delete(node); db.commit()
+
+
+@app.post("/api/nodes/{node_id}/media", response_model=MediaAssetRead, status_code=status.HTTP_201_CREATED)
+def upload_media(node_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    node = node_or_404(node_id, db)
+    if node.type != NodeType.media:
+        raise HTTPException(400, "Медиа можно прикреплять только к медиа-узлу")
+    if file.content_type not in ALLOWED_MEDIA:
+        raise HTTPException(415, "Поддерживаются JPEG, PNG, WebP, GIF, MP4, WebM и MOV")
+    extension = Path(file.filename or "upload").suffix.lower()
+    asset_id = uuid.uuid4().hex
+    is_image = (file.content_type or "").startswith("image/")
+    media_dir = MEDIA_ROOT / ("images" if is_image else "videos")
+    media_dir.mkdir(parents=True, exist_ok=True)
+    stored_relative = f"{'images' if is_image else 'videos'}/{asset_id}{extension}"
+    destination = MEDIA_ROOT / stored_relative
+    size = 0
+    with destination.open("wb") as target:
+        while chunk := file.file.read(1024 * 1024):
+            size += len(chunk)
+            if size > MAX_UPLOAD_BYTES:
+                target.close(); destination.unlink(missing_ok=True)
+                raise HTTPException(413, f"Файл больше допустимого лимита {MAX_UPLOAD_BYTES // 1024 // 1024} МБ")
+            target.write(chunk)
+    preview_path = None; width = height = None
+    if is_image:
+        try:
+            with Image.open(destination) as image:
+                width, height = image.size
+                image.thumbnail((800, 800))
+                thumb_rel = f"images/{asset_id}_thumb.jpg"
+                image.convert("RGB").save(MEDIA_ROOT / thumb_rel, "JPEG", quality=85)
+                preview_path = thumb_rel
+        except UnidentifiedImageError:
+            destination.unlink(missing_ok=True)
+            raise HTTPException(400, "Файл не является корректным изображением")
+    next_order = (max((asset.sort_order for asset in node.media_assets), default=-1) + 1)
+    asset = MediaAsset(node_id=node.id, original_filename=file.filename or "upload", storage_path=stored_relative, mime_type=file.content_type, size_bytes=size, preview_path=preview_path, width=width, height=height, sort_order=next_order)
+    db.add(asset); db.commit(); db.refresh(asset)
+    return asset
+
+
+@app.patch("/api/media/{asset_id}", response_model=MediaAssetRead)
+def update_media(asset_id: int, payload: MediaAssetUpdate, db: Session = Depends(get_db)):
+    asset = db.get(MediaAsset, asset_id)
+    if not asset:
+        raise HTTPException(404, "Файл не найден")
+    for field in ("sort_order", "is_favorite"):
+        if field in payload.model_fields_set:
+            setattr(asset, field, getattr(payload, field))
+    db.commit(); db.refresh(asset)
+    return asset
+
+
+@app.delete("/api/media/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_media(asset_id: int, db: Session = Depends(get_db)):
+    asset = db.get(MediaAsset, asset_id)
+    if not asset:
+        raise HTTPException(404, "Файл не найден")
+    for file_path in (asset.storage_path, asset.preview_path):
+        if file_path:
+            (MEDIA_ROOT / file_path).unlink(missing_ok=True)
+    db.delete(asset); db.commit()
+
+
+@app.post("/api/boards/{board_id}/edges", response_model=EdgeRead, status_code=status.HTTP_201_CREATED)
+def create_edge(board_id: int, payload: EdgeCreate, db: Session = Depends(get_db)):
+    board_or_404(board_id, db)
+    if payload.source_node_id == payload.target_node_id:
+        raise HTTPException(400, "Нельзя связать узел с самим собой")
+    ids = set(db.scalars(select(MemoryNode.id).where(MemoryNode.board_id == board_id, MemoryNode.id.in_([payload.source_node_id, payload.target_node_id]))).all())
+    if ids != {payload.source_node_id, payload.target_node_id}:
+        raise HTTPException(400, "Оба узла должны принадлежать этой доске")
+    existing = db.scalar(select(MemoryEdge).where(MemoryEdge.board_id == board_id, MemoryEdge.source_node_id == payload.source_node_id, MemoryEdge.target_node_id == payload.target_node_id))
+    if existing:
+        return existing
+    edge = MemoryEdge(board_id=board_id, **payload.model_dump())
+    db.add(edge); db.commit(); db.refresh(edge)
+    return edge
+
+
+@app.delete("/api/edges/{edge_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_edge(edge_id: int, db: Session = Depends(get_db)):
+    edge = db.get(MemoryEdge, edge_id)
+    if not edge:
+        raise HTTPException(404, "Связь не найдена")
+    db.delete(edge); db.commit()
