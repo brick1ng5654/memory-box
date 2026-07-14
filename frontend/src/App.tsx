@@ -6,6 +6,11 @@ import MemoryCard, { FlowMemoryNode } from './MemoryCard'
 import Editor from './Editor'
 
 const nodeTypes = { memory: MemoryCard }
+const monthNames = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
+const formatDate = (value: string) => new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${value}T00:00:00`))
+const formatPeriod = (board: Pick<Board, 'start_date' | 'end_date'>) => board.start_date === board.end_date ? formatDate(board.start_date) : `${formatDate(board.start_date)} — ${formatDate(board.end_date)}`
+const toDateKey = (value: Date) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
+const todayKey = () => toDateKey(new Date())
 const toFlowNode = (node: MemoryNode, onOpenMedia: (assets: Asset[], index: number) => void): FlowMemoryNode => ({
   id: String(node.id), type: 'memory', position: { x: node.position_x, y: node.position_y },
   style: { width: node.width ?? (node.type === 'media' ? 300 : 230), height: node.type === 'media' ? node.height ?? 260 : undefined },
@@ -16,7 +21,7 @@ const toFlowEdge = (edge: MemoryEdge): Edge => ({
   style: { stroke: '#a38dcc', strokeWidth: 1.6, strokeLinecap: 'round' },
 })
 
-function BoardCanvas() {
+function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void }) {
   const { screenToFlowPosition } = useReactFlow()
   const [board, setBoard] = useState<Board | null>(null)
   const [nodes, setNodes] = useNodesState<FlowMemoryNode>([])
@@ -41,14 +46,14 @@ function BoardCanvas() {
   const openMedia = useCallback((assets: Asset[], index: number) => setLightbox({ assets, index }), [])
   const load = useCallback(async () => {
     try {
-      const next = await api.board()
+      const next = await api.board(boardId)
       setBoard(next)
       setNodes(next.nodes.map(node => toFlowNode(node, openMedia)))
       setEdges(next.edges.map(toFlowEdge))
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Не удалось загрузить холст')
     } finally { setLoading(false) }
-  }, [openMedia, setEdges, setNodes])
+  }, [boardId, openMedia, setEdges, setNodes])
 
   useEffect(() => { load() }, [load])
   useEffect(() => { nodesRef.current = nodes }, [nodes])
@@ -219,26 +224,85 @@ function BoardCanvas() {
     }
     setSelected(null)
   }
-  const days = useMemo(() => board ? Array.from({ length: new Date(board.year, board.month, 0).getDate() }, (_, index) => index + 1) : [], [board])
+  const days = useMemo(() => {
+    if (!board) return []
+    const dates: string[] = []; const current = new Date(`${board.start_date}T00:00:00`); const end = new Date(`${board.end_date}T00:00:00`)
+    while (current <= end) { dates.push(toDateKey(current)); current.setDate(current.getDate() + 1) }
+    return dates
+  }, [board])
   if (loading) return <main className="loading">Открываем MemoryBox…</main>
   if (!board) return <main className="loading error">{notice || 'Доска недоступна'}</main>
   const activeAsset = lightbox?.assets[lightbox.index]
   const dotSize = Math.min(9, Math.max(1.35, 1.7 / zoom))
 
   return <main className="app" onClick={() => setContextMenu(null)}>
-    <header><div><p className="eyebrow">ЛИЧНЫЙ ХОЛСТ</p><input aria-label="Название доски" value={board.title} onChange={event => setBoard({ ...board, title: event.target.value })} onBlur={async () => { try { await api.renameBoard(board.id, board.title) } catch { setNotice('Не удалось сохранить название') } }} /></div></header>
+    <header><div><input aria-label="Название доски" value={board.title} onChange={event => setBoard({ ...board, title: event.target.value })} onBlur={async () => { try { await api.renameBoard(board.id, board.title) } catch { setNotice('Не удалось сохранить название') } }} /></div><button className="boards-link" onClick={onHome}>Все доски</button></header>
     {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
     <section className="canvas-wrap" onMouseDownCapture={event => { if (event.button === 2) contextSelectionRef.current = { nodeIds: nodes.filter(node => node.selected).map(node => Number(node.id)), edgeIds: edges.filter(edge => edge.selected).map(edge => Number(edge.id)) } }} onContextMenuCapture={event => { const target = event.target as HTMLElement; const nodeElement = target.closest<HTMLElement>('.react-flow__node'); const edgeElement = target.closest<HTMLElement>('.react-flow__edge'); const nodeId = Number(nodeElement?.dataset.id); const edgeId = Number(edgeElement?.dataset.id); openContextMenu(event, Number.isFinite(nodeId) ? nodeId : undefined, Number.isFinite(edgeId) ? [edgeId] : undefined) }}>
       <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onSelectionChange={onSelectionChange} onNodeClick={(_, node) => { setSelected(node.data); setSelectedIds([Number(node.id)]); setSelectedEdgeIds([]) }} onEdgeClick={(_, edge) => { setSelectedEdgeIds([Number(edge.id)]); setSelected(null); setSelectedIds([]) }} onNodeContextMenu={(event, node) => openContextMenu(event, Number(node.id))} onEdgeContextMenu={(event, edge) => { const id = Number(edge.id); openContextMenu(event, undefined, selectedEdgeIds.length > 1 && selectedEdgeIds.includes(id) ? selectedEdgeIds : [id]) }} onPaneContextMenu={event => openContextMenu(event)} onPaneClick={() => { setSelected(null); setSelectedIds([]); setSelectedEdgeIds([]) }} onNodeDragStop={(_, node) => void syncNode(node.id, { position_x: node.position.x, position_y: node.position.y })} onConnectStart={() => setConnectionHandles(true)} onConnectEnd={() => setConnectionHandles(false)} onConnect={onConnect} onMove={(_, viewport) => { if (Math.abs(viewport.zoom - zoomRef.current) >= 0.02) { zoomRef.current = viewport.zoom; setZoom(viewport.zoom) } }} nodeTypes={nodeTypes} deleteKeyCode={null} connectionRadius={32} proOptions={{ hideAttribution: true }} onlyRenderVisibleElements fitView minZoom={0.2} maxZoom={2} defaultEdgeOptions={{ type: 'bezier' }}>
         <Background variant={BackgroundVariant.Dots} color="#484252" gap={20} size={dotSize} />
       </ReactFlow>
-      <div className="timeline"><span>Июль {board.year}</span><div>{days.map(day => { const date = `${board.year}-${String(board.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`; const datedNodes = board.nodes.filter(node => node.temporal_date === date).slice(0, 5); return <i key={day}><b className="timeline-bookmarks">{datedNodes.map(node => <em key={node.id} className={`timeline-bookmark ${node.type}`} title={node.title || node.track_data?.title || 'Воспоминание'} />)}</b><small>{day}</small></i> })}</div></div>
+      <div className="timeline"><span>{formatPeriod(board)}</span><div className="timeline-scroll" onWheel={event => { if (event.deltaY) { event.currentTarget.scrollLeft += event.deltaY; event.preventDefault() } }}><div className="timeline-days">{days.map(date => { const datedNodes = board.nodes.filter(node => node.temporal_date === date).slice(0, 5); const day = Number(date.slice(8)); return <i key={date}><b className="timeline-bookmarks">{datedNodes.map(node => <em key={node.id} className={`timeline-bookmark ${node.type}`} title={node.title || node.track_data?.title || 'Воспоминание'} />)}</b><small>{day}</small></i> })}</div></div></div>
     </section>
-    <Editor node={selected} boardYear={board.year} boardMonth={board.month} onClose={closeEditor} onSave={save} onRequestDelete={() => setDeleteDialog(true)} onDeleteAsset={removeAsset} onUpdateAsset={updateAsset} onReorderAssets={reorderAssets} onPreview={preview} onCreate={create} />
+    <Editor node={selected} boardStartDate={board.start_date} boardEndDate={board.end_date} onClose={closeEditor} onSave={save} onRequestDelete={() => setDeleteDialog(true)} onDeleteAsset={removeAsset} onUpdateAsset={updateAsset} onReorderAssets={reorderAssets} onPreview={preview} onCreate={create} />
     {contextMenu && <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}>{contextMenu.edgeIds?.length ? <><p>{contextMenu.edgeIds.length > 1 ? 'Связи' : 'Связь'}</p><button className="context-danger" onClick={() => { void onEdgesDelete(edges.filter(edge => contextMenu.edgeIds?.includes(Number(edge.id)))); setContextMenu(null) }}>Удалить {contextMenu.edgeIds.length > 1 ? 'связи' : 'связь'}</button></> : contextMenu.nodeIds && contextMenu.nodeIds.length > 1 ? <><p>Выбрано: {contextMenu.nodeIds.length}</p><button className="context-danger" onClick={() => { setDeleteDialog(true); setContextMenu(null) }}>Удалить выбранные</button></> : contextMenu.nodeId ? <><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) setClipboard(node); setContextMenu(null) }}>Копировать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) { setClipboard(node); setSelectedIds([node.id]); void remove() } setContextMenu(null) }}>Вырезать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) void duplicate(node); setContextMenu(null) }}>Дублировать</button></> : <>{clipboard && <button onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(clipboard.type, point, clipboard); setContextMenu(null) }}>Вставить</button>}<p>Создать</p>{(['note', 'media', 'track'] as NodeType[]).map(type => <button key={type} onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(type, point); setContextMenu(null) }}>{type === 'note' ? 'Заметку' : type === 'media' ? 'Медиа' : 'Музыку'}</button>)}</>}</div>}
     {deleteDialog && selectedIds.length > 0 && <div className="confirm-backdrop"><div className="confirm-dialog"><p className="eyebrow">Удаление</p><h2>Удалить {selectedIds.length > 1 ? 'выбранные воспоминания' : 'воспоминание'}?</h2><p>Карточки, их файлы и связи будут удалены.</p><div><button onClick={() => setDeleteDialog(false)}>Отмена</button><button ref={confirmButton} className="confirm-delete" onClick={() => { setDeleteDialog(false); void remove() }}>Подтвердить</button></div></div></div>}
     {activeAsset && <div className="lightbox" onClick={() => setLightbox(null)}><button className="lightbox-close" onClick={() => setLightbox(null)}>×</button>{lightbox.assets.length > 1 && <button className="lightbox-nav prev" onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index: (current.index - 1 + current.assets.length) % current.assets.length } : current) }}>‹</button>}<div className="lightbox-content" onClick={event => event.stopPropagation()} key={activeAsset.id}>{activeAsset.mime_type.startsWith('image/') ? <img src={mediaUrl(activeAsset.storage_path)} alt={activeAsset.original_filename} /> : <video src={mediaUrl(activeAsset.storage_path)} controls autoPlay />}</div>{lightbox.assets.length > 1 && <button className="lightbox-nav next" onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index: (current.index + 1) % current.assets.length } : current) }}>›</button>}<div className="lightbox-footer"><p>{activeAsset.original_filename} {lightbox.assets.length > 1 && `• ${lightbox.index + 1}/${lightbox.assets.length}`}</p>{lightbox.assets.length > 1 && <div className="lightbox-thumbs">{lightbox.assets.map((asset, index) => <button key={asset.id} className={index === lightbox.index ? 'active' : ''} onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index } : current) }}>{asset.mime_type.startsWith('image/') ? <img src={mediaUrl(asset.preview_path || asset.storage_path)} alt={asset.original_filename} /> : <video src={mediaUrl(asset.storage_path)} muted preload="metadata" />}</button>)}</div>}</div></div>}
   </main>
 }
 
-export default function App() { return <ReactFlowProvider><BoardCanvas /></ReactFlowProvider> }
+function BoardHome({ onOpen }: { onOpen: (id: number) => void }) {
+  const [boards, setBoards] = useState<Board[]>([])
+  const [title, setTitle] = useState('')
+  const initialDate = todayKey()
+  const [startDate, setStartDate] = useState(initialDate)
+  const [endDate, setEndDate] = useState(initialDate)
+  const [editingBoard, setEditingBoard] = useState<Board | null>(null)
+  const [boardToDelete, setBoardToDelete] = useState<Board | null>(null)
+  const [error, setError] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [savingSettings, setSavingSettings] = useState(false)
+  const [deletingBoard, setDeletingBoard] = useState(false)
+  const loadBoards = useCallback(async () => { try { setBoards(await api.boards()) } catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Не удалось загрузить доски') } }, [])
+  useEffect(() => { void loadBoards() }, [loadBoards])
+  const createBoard = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (creating) return
+    setCreating(true); setError('')
+    try { const board = await api.createBoard({ title: title.trim() || `${formatDate(startDate)} — ${formatDate(endDate)}`, start_date: startDate, end_date: endDate }); onOpen(board.id) }
+    catch (createError) { setError(createError instanceof Error ? createError.message : 'Не удалось создать доску') }
+    finally { setCreating(false) }
+  }
+  const saveBoardSettings = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!editingBoard || savingSettings) return
+    setSavingSettings(true); setError('')
+    try {
+      const title = editingBoard.title.trim() || `${formatDate(editingBoard.start_date)} — ${formatDate(editingBoard.end_date)}`
+      const saved = await api.updateBoard(editingBoard.id, { title, start_date: editingBoard.start_date, end_date: editingBoard.end_date })
+      setBoards(current => current.map(board => board.id === saved.id ? { ...board, ...saved } : board))
+      setEditingBoard(null)
+    } catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'Не удалось сохранить настройки') }
+    finally { setSavingSettings(false) }
+  }
+  const deleteBoard = async () => {
+    if (!boardToDelete || deletingBoard) return
+    setDeletingBoard(true); setError('')
+    try {
+      await api.deleteBoard(boardToDelete.id)
+      setBoards(current => current.filter(board => board.id !== boardToDelete.id))
+      setBoardToDelete(null)
+    } catch (deleteError) { setError(deleteError instanceof Error ? deleteError.message : 'Не удалось удалить доску') }
+    finally { setDeletingBoard(false) }
+  }
+  return <main className="board-home"><header><div><p className="home-logo">MEMORYBOX</p></div></header><section className="board-home-content"><form className="new-board" onSubmit={createBoard}><p className="eyebrow">Новая доска</p><h2>Начать новый период</h2><label>Название<input value={title} onChange={event => setTitle(event.target.value)} placeholder="Например, Поездка в Карелию" autoFocus /></label><div className="new-board-date"><label>С<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><label>По<input type="date" min={startDate} value={endDate} onChange={event => setEndDate(event.target.value)} /></label></div>{error && <p className="error">{error}</p>}<button className="new-board-submit" disabled={creating}>{creating ? 'Создаю…' : 'Создать доску'}</button></form><div className="board-library"><div className="board-library-heading"><p className="eyebrow">Ваши доски</p><span>{boards.length}</span></div>{boards.length ? <div className="board-grid">{boards.map(board => <article className="board-card" key={board.id}><button className="board-card-open" onClick={() => onOpen(board.id)}><span className="board-card-dates"><time>{formatDate(board.start_date)}</time>{board.start_date !== board.end_date && <time>{formatDate(board.end_date)}</time>}</span><strong>{board.title}</strong><small>Открыть холст</small></button><button className="board-card-settings" aria-label={`Настроить доску «${board.title}»`} title="Настроить доску" onClick={() => setEditingBoard({ ...board })}>⚙</button></article>)}</div> : <p className="board-empty">Создайте первую доску — она появится здесь.</p>}</div></section>{editingBoard && <div className="confirm-backdrop" onMouseDown={() => setEditingBoard(null)}><form className="board-settings" onMouseDown={event => event.stopPropagation()} onSubmit={saveBoardSettings}><p className="eyebrow">Настройки доски</p><h2>Период и название</h2><label>Название<input value={editingBoard.title} onChange={event => setEditingBoard({ ...editingBoard, title: event.target.value })} autoFocus /></label><div className="new-board-date"><label>С<input type="date" value={editingBoard.start_date} onChange={event => setEditingBoard({ ...editingBoard, start_date: event.target.value })} /></label><label>По<input type="date" min={editingBoard.start_date} value={editingBoard.end_date} onChange={event => setEditingBoard({ ...editingBoard, end_date: event.target.value })} /></label></div><div><button type="button" className="danger" onClick={() => { setBoardToDelete(editingBoard); setEditingBoard(null) }}>Удалить доску</button><span /><button type="button" onClick={() => setEditingBoard(null)}>Отмена</button><button className="primary" disabled={savingSettings}>{savingSettings ? 'Сохраняю…' : 'Сохранить'}</button></div></form></div>}{boardToDelete && <div className="confirm-backdrop"><div className="confirm-dialog"><p className="eyebrow">Удаление доски</p><h2>Удалить «{boardToDelete.title}»?</h2><p>Все карточки, связи и загруженные файлы этой доски будут удалены без возможности восстановления.</p><div><button onClick={() => setBoardToDelete(null)} disabled={deletingBoard}>Отмена</button><button className="confirm-delete" onClick={() => void deleteBoard()} disabled={deletingBoard}>{deletingBoard ? 'Удаляю…' : 'Удалить доску'}</button></div></div></div>}</main>
+}
+
+export default function App() {
+  const [path, setPath] = useState(() => window.location.pathname)
+  useEffect(() => { const onPopState = () => setPath(window.location.pathname); window.addEventListener('popstate', onPopState); return () => window.removeEventListener('popstate', onPopState) }, [])
+  const openBoard = useCallback((id: number) => { const next = `/boards/${id}`; window.history.pushState({}, '', next); setPath(next) }, [])
+  const openHome = useCallback(() => { window.history.pushState({}, '', '/'); setPath('/') }, [])
+  const match = path.match(/^\/boards\/(\d+)$/)
+  return match ? <ReactFlowProvider><BoardCanvas boardId={Number(match[1])} onHome={openHome} /></ReactFlowProvider> : <BoardHome onOpen={openBoard} />
+}

@@ -19,6 +19,34 @@ def test_initial_board_and_node_crud(client):
     assert changed.json()["title"] == "Вечерняя прогулка"
 
 
+def test_create_and_list_boards(client):
+    created = client.post("/api/boards", json={"title": "Август 2026", "start_date": "2026-08-01", "end_date": "2026-08-12"})
+    assert created.status_code == 201
+    board_id = created.json()["id"]
+    listed = client.get("/api/boards").json()
+    assert any(item["id"] == board_id for item in listed)
+    detail = client.get(f"/api/boards/{board_id}")
+    assert detail.status_code == 200
+    assert detail.json()["nodes"] == []
+
+
+def test_update_board_period_and_title(client):
+    created = client.post("/api/boards", json={"title": "Summer", "start_date": "2026-07-01", "end_date": "2026-07-31"}).json()
+    changed = client.patch(f"/api/boards/{created['id']}", json={"title": "Long summer", "end_date": "2026-08-15"})
+    assert changed.status_code == 200
+    assert changed.json()["title"] == "Long summer"
+    assert changed.json()["start_date"] == "2026-07-01"
+    assert changed.json()["end_date"] == "2026-08-15"
+    invalid = client.patch(f"/api/boards/{created['id']}", json={"start_date": "2026-09-01"})
+    assert invalid.status_code == 422
+
+
+def test_delete_board(client):
+    created = client.post("/api/boards", json={"title": "Temporary", "start_date": "2026-07-01", "end_date": "2026-07-01"}).json()
+    assert client.delete(f"/api/boards/{created['id']}").status_code == 204
+    assert client.get(f"/api/boards/{created['id']}").status_code == 404
+
+
 def test_edges_and_safe_node_deletion(client):
     current = board(client)
     first = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "note"}).json()

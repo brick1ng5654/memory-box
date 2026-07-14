@@ -86,7 +86,15 @@ class NodeRead(NodeCreate):
 
 
 class BoardUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+class BoardCreate(BoardUpdate):
     title: str = Field(min_length=1, max_length=200)
+    start_date: date
+    end_date: date
 
 
 class BoardRead(BaseModel):
@@ -95,6 +103,8 @@ class BoardRead(BaseModel):
     title: str
     year: int
     month: int
+    start_date: date
+    end_date: date
     created_at: datetime
     updated_at: datetime
 

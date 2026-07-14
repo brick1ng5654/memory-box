@@ -29,6 +29,8 @@ class Board(Base):
     title: Mapped[str] = mapped_column(String(200))
     year: Mapped[int] = mapped_column(Integer)
     month: Mapped[int] = mapped_column(Integer)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     nodes: Mapped[list["MemoryNode"]] = relationship(back_populates="board", cascade="all, delete-orphan")

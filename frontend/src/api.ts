@@ -5,7 +5,7 @@ export type Track = { title: string; artist: string; kind: 'track' | 'playlist';
 export type SpotifyTrack = { id: string; title: string; artist: string; cover_url?: string | null }
 export type MemoryNode = { id: number; board_id: number; type: NodeType; title: string; text_content?: string | null; position_x: number; position_y: number; width?: number | null; height?: number | null; temporal_date?: string | null; media_assets: Asset[]; track_data?: Track | null }
 export type MemoryEdge = { id: number; board_id: number; source_node_id: number; target_node_id: number; label?: string | null }
-export type Board = { id: number; title: string; year: number; month: number; nodes: MemoryNode[]; edges: MemoryEdge[] }
+export type Board = { id: number; title: string; year: number; month: number; start_date: string; end_date: string; nodes: MemoryNode[]; edges: MemoryEdge[] }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, { headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) }, ...init })
@@ -14,7 +14,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  board: () => request<Board>('/board'),
+  board: (id: number) => request<Board>(`/boards/${id}`),
+  boards: () => request<Board[]>('/boards'),
+  createBoard: (data: Pick<Board, 'title' | 'start_date' | 'end_date'>) => request<Board>('/boards', { method: 'POST', body: JSON.stringify(data) }),
+  updateBoard: (id: number, data: Partial<Pick<Board, 'title' | 'start_date' | 'end_date'>>) => request<Board>(`/boards/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteBoard: (id: number) => request<void>(`/boards/${id}`, { method: 'DELETE' }),
   spotifySearch: (query: string) => request<SpotifyTrack[]>(`/spotify/search?query=${encodeURIComponent(query)}`),
   renameBoard: (id: number, title: string) => request<Board>(`/boards/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   createNode: (boardId: number, data: Partial<MemoryNode> & { type: NodeType }) => request<MemoryNode>(`/boards/${boardId}/nodes`, { method: 'POST', body: JSON.stringify(data) }),

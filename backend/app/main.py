@@ -3,6 +3,8 @@ import uuid
 import json
 import base64
 import time
+import calendar
+from datetime import date
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -12,12 +14,12 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, st
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session, joinedload
 
 from .database import Base, engine, get_db
 from .models import Board, MediaAsset, MemoryEdge, MemoryNode, NodeType, TrackData
-from .schemas import BoardDetail, BoardRead, BoardUpdate, EdgeCreate, EdgeRead, MediaAssetRead, MediaAssetUpdate, NodeCreate, NodeRead, NodeUpdate, SpotifyTrackSearchResult
+from .schemas import BoardCreate, BoardDetail, BoardRead, BoardUpdate, EdgeCreate, EdgeRead, MediaAssetRead, MediaAssetUpdate, NodeCreate, NodeRead, NodeUpdate, SpotifyTrackSearchResult
 
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", "./uploads"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", 100 * 1024 * 1024))
@@ -33,10 +35,20 @@ spotify_token_expires_at = 0.0
 def initialise():
     MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    board_columns = {column["name"] for column in inspect(engine).get_columns("boards")}
+    with engine.begin() as connection:
+        if "start_date" not in board_columns:
+            connection.execute(text("ALTER TABLE boards ADD COLUMN start_date DATE"))
+        if "end_date" not in board_columns:
+            connection.execute(text("ALTER TABLE boards ADD COLUMN end_date DATE"))
     with Session(engine) as db:
         if not db.scalar(select(Board.id).limit(1)):
-            db.add(Board(title="Июль 2026", year=2026, month=7))
+            db.add(Board(title="Июль 2026", year=2026, month=7, start_date=date(2026, 7, 1), end_date=date(2026, 7, 31)))
             db.commit()
+        for board in db.scalars(select(Board).where(Board.start_date.is_(None) | Board.end_date.is_(None))).all():
+            board.start_date = date(board.year, board.month, 1)
+            board.end_date = date(board.year, board.month, calendar.monthrange(board.year, board.month)[1])
+        db.commit()
 
 
 @app.on_event("startup")
@@ -114,12 +126,59 @@ def get_primary_board(db: Session = Depends(get_db)):
     return board
 
 
+@app.get("/api/boards", response_model=list[BoardRead])
+def list_boards(db: Session = Depends(get_db)):
+    return db.scalars(select(Board).order_by(Board.start_date.desc(), Board.created_at.desc())).all()
+
+
+@app.post("/api/boards", response_model=BoardRead, status_code=status.HTTP_201_CREATED)
+def create_board(payload: BoardCreate, db: Session = Depends(get_db)):
+    if payload.end_date < payload.start_date:
+        raise HTTPException(422, "Конечная дата не может быть раньше начальной")
+    board = Board(title=payload.title, year=payload.start_date.year, month=payload.start_date.month, start_date=payload.start_date, end_date=payload.end_date)
+    db.add(board); db.commit(); db.refresh(board)
+    return board
+
+
+@app.get("/api/boards/{board_id}", response_model=BoardDetail)
+def get_board(board_id: int, db: Session = Depends(get_db)):
+    statement = select(Board).options(joinedload(Board.nodes).joinedload(MemoryNode.media_assets), joinedload(Board.nodes).joinedload(MemoryNode.track_data), joinedload(Board.edges)).where(Board.id == board_id)
+    board = db.execute(statement).unique().scalar_one_or_none()
+    if not board:
+        raise HTTPException(404, "Доска не найдена")
+    return board
+
+
 @app.patch("/api/boards/{board_id}", response_model=BoardRead)
 def update_board(board_id: int, payload: BoardUpdate, db: Session = Depends(get_db)):
     board = board_or_404(board_id, db)
-    board.title = payload.title
+    next_start = payload.start_date if payload.start_date is not None else board.start_date
+    next_end = payload.end_date if payload.end_date is not None else board.end_date
+    if next_end < next_start:
+        raise HTTPException(422, "Конечная дата не может быть раньше начальной")
+    if payload.title is not None:
+        board.title = payload.title
+    board.start_date = next_start
+    board.end_date = next_end
+    board.year = next_start.year
+    board.month = next_start.month
     db.commit(); db.refresh(board)
     return board
+
+
+@app.delete("/api/boards/{board_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_board(board_id: int, db: Session = Depends(get_db)):
+    statement = select(Board).options(joinedload(Board.nodes).joinedload(MemoryNode.media_assets)).where(Board.id == board_id)
+    board = db.execute(statement).unique().scalar_one_or_none()
+    if not board:
+        raise HTTPException(404, "Доска не найдена")
+    for node in board.nodes:
+        for asset in node.media_assets:
+            for file_path in (asset.storage_path, asset.preview_path):
+                if file_path:
+                    (MEDIA_ROOT / file_path).unlink(missing_ok=True)
+    db.delete(board)
+    db.commit()
 
 
 @app.post("/api/boards/{board_id}/nodes", response_model=NodeRead, status_code=status.HTTP_201_CREATED)
