@@ -151,14 +151,16 @@ function BoardCanvas() {
         temporal_date: source?.temporal_date,
         track_data: type === 'track' ? source?.track_data || { title: '', artist: '', kind: 'track', cover_size: 'small', playlist_items: [] } : undefined,
       })
-      setNodes(current => [...current, toFlowNode(node, openMedia)])
+      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia), selected: true }])
       setBoard(current => current ? { ...current, nodes: [...current.nodes, node] } : current)
+      selectionRef.current = [node.id]
       setSelected(node); setSelectedIds([node.id])
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось создать узел') }
   }
   const save = async (draft: Partial<MemoryNode>, files: File[] = []) => {
     if (!selected) return
     const updated = await api.updateNode(selected.id, { title: draft.title, text_content: draft.text_content, temporal_date: draft.temporal_date, track_data: draft.track_data })
+    replaceNode(updated)
     const errors: string[] = []
     for (const file of files) {
       try { await api.upload(updated.id, file) }
