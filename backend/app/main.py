@@ -24,6 +24,10 @@ from .schemas import BoardCreate, BoardDetail, BoardRead, BoardUpdate, EdgeCreat
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", "./uploads"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", 100 * 1024 * 1024))
 ALLOWED_MEDIA = {"image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4", "video/webm", "video/quicktime"}
+MEDIA_TYPES_BY_EXTENSION = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif",
+    ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".m4v": "video/mp4",
+}
 MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="MemoryBox API", version="0.1.0")
@@ -229,11 +233,13 @@ def upload_media(node_id: int, file: UploadFile = File(...), db: Session = Depen
     node = node_or_404(node_id, db)
     if node.type != NodeType.media:
         raise HTTPException(400, "Медиа можно прикреплять только к медиа-узлу")
-    if file.content_type not in ALLOWED_MEDIA:
-        raise HTTPException(415, "Поддерживаются JPEG, PNG, WebP, GIF, MP4, WebM и MOV")
     extension = Path(file.filename or "upload").suffix.lower()
+    content_type = (file.content_type or "").lower()
+    detected_type = content_type if content_type in ALLOWED_MEDIA else MEDIA_TYPES_BY_EXTENSION.get(extension)
+    if detected_type not in ALLOWED_MEDIA:
+        raise HTTPException(415, "Поддерживаются JPEG, PNG, WebP, GIF, MP4, WebM и MOV")
     asset_id = uuid.uuid4().hex
-    is_image = (file.content_type or "").startswith("image/")
+    is_image = detected_type.startswith("image/")
     media_dir = MEDIA_ROOT / ("images" if is_image else "videos")
     media_dir.mkdir(parents=True, exist_ok=True)
     stored_relative = f"{'images' if is_image else 'videos'}/{asset_id}{extension}"
@@ -259,7 +265,7 @@ def upload_media(node_id: int, file: UploadFile = File(...), db: Session = Depen
             destination.unlink(missing_ok=True)
             raise HTTPException(400, "Файл не является корректным изображением")
     next_order = (max((asset.sort_order for asset in node.media_assets), default=-1) + 1)
-    asset = MediaAsset(node_id=node.id, original_filename=file.filename or "upload", storage_path=stored_relative, mime_type=file.content_type, size_bytes=size, preview_path=preview_path, width=width, height=height, sort_order=next_order)
+    asset = MediaAsset(node_id=node.id, original_filename=file.filename or "upload", storage_path=stored_relative, mime_type=detected_type, size_bytes=size, preview_path=preview_path, width=width, height=height, sort_order=next_order)
     db.add(asset); db.commit(); db.refresh(asset)
     return asset
 

@@ -13,9 +13,11 @@ def test_initial_board_and_node_crud(client):
     created = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "note", "title": "Прогулка", "text_content": "Тёплый вечер", "position_x": 120, "position_y": 80, "temporal_date": "2026-07-17"})
     assert created.status_code == 201
     node = created.json()
-    changed = client.patch(f"/api/nodes/{node['id']}", json={"position_x": 333, "title": "Вечерняя прогулка"})
+    changed = client.patch(f"/api/nodes/{node['id']}", json={"position_x": 333, "width": 420, "height": 260, "title": "Вечерняя прогулка"})
     assert changed.status_code == 200
     assert changed.json()["position_x"] == 333
+    assert changed.json()["width"] == 420
+    assert changed.json()["height"] == 260
     assert changed.json()["title"] == "Вечерняя прогулка"
 
 
@@ -85,7 +87,7 @@ def test_multiple_media_uploads(client):
     binary = BytesIO(); image.save(binary, format="PNG")
     uploaded_image = client.post(f"/api/nodes/{node['id']}/media", files={"file": ("one.png", binary.getvalue(), "image/png")})
     assert uploaded_image.status_code == 201
-    video = client.post(f"/api/nodes/{node['id']}/media", files={"file": ("moment.mp4", b"not-transcoded-in-mvp", "video/mp4")})
+    video = client.post(f"/api/nodes/{node['id']}/media", files={"file": ("moment.mp4", b"not-transcoded-in-mvp", "application/octet-stream")})
     assert video.status_code == 201
     assert video.json()["mime_type"] == "video/mp4"
     saved = next(item for item in board(client)["nodes"] if item["id"] == node["id"])

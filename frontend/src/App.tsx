@@ -13,7 +13,7 @@ const toDateKey = (value: Date) => `${value.getFullYear()}-${String(value.getMon
 const todayKey = () => toDateKey(new Date())
 const toFlowNode = (node: MemoryNode, onOpenMedia: (assets: Asset[], index: number) => void): FlowMemoryNode => ({
   id: String(node.id), type: 'memory', position: { x: node.position_x, y: node.position_y },
-  style: { width: node.width ?? (node.type === 'media' ? 300 : 230), height: node.type === 'media' ? node.height ?? 260 : undefined },
+  style: { width: node.width ?? (node.type === 'media' ? 300 : 230), height: node.height ?? (node.type === 'media' ? 260 : undefined) },
   data: { ...node, onOpenMedia },
 })
 const toFlowEdge = (edge: MemoryEdge): Edge => ({
@@ -89,7 +89,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   const replaceNode = useCallback((updated: MemoryNode) => {
     setNodes(list => list.map(node => node.id === String(updated.id) ? {
       ...node,
-      style: { ...node.style, width: updated.width ?? (updated.type === 'media' ? 300 : 230), height: updated.type === 'media' ? updated.height ?? 260 : undefined },
+      style: { ...node.style, width: updated.width ?? (updated.type === 'media' ? 300 : 230), height: updated.height ?? (updated.type === 'media' ? 260 : undefined) },
       data: { ...updated, onOpenMedia: openMedia },
     } : node))
     setBoard(current => current ? { ...current, nodes: current.nodes.map(node => node.id === updated.id ? updated : node) } : current)
@@ -152,7 +152,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
       const node = await api.createNode(board.id, {
         type, title: source?.title || '', text_content: source?.text_content,
         position_x: position?.x ?? 100 + index * 40, position_y: position?.y ?? 120 + index * 30,
-        width: media ? source?.width ?? 300 : undefined, height: media ? source?.height ?? 260 : undefined,
+        width: source?.width ?? (media ? 300 : type === 'note' ? 230 : undefined), height: source?.height ?? (media ? 260 : undefined),
         temporal_date: source?.temporal_date,
         track_data: type === 'track' ? source?.track_data || { title: '', artist: '', kind: 'track', cover_size: 'small', playlist_items: [] } : undefined,
       })
@@ -170,7 +170,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
     for (const file of files) {
       try { await api.upload(updated.id, file) }
       catch (error) { errors.push(`${file.name}: ${error instanceof Error ? error.message : 'не удалось загрузить файл'}`) }
-      finally { replaceNode(await api.node(updated.id)) }
+      finally { try { replaceNode(await api.node(updated.id)) } catch (refreshError) { errors.push(`Не удалось обновить список файлов: ${refreshError instanceof Error ? refreshError.message : 'повторите попытку'}`) } }
     }
     if (errors.length) throw new Error(errors.join('\n'))
   }
@@ -242,7 +242,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
       <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onSelectionChange={onSelectionChange} onNodeClick={(_, node) => { setSelected(node.data); setSelectedIds([Number(node.id)]); setSelectedEdgeIds([]) }} onEdgeClick={(_, edge) => { setSelectedEdgeIds([Number(edge.id)]); setSelected(null); setSelectedIds([]) }} onNodeContextMenu={(event, node) => openContextMenu(event, Number(node.id))} onEdgeContextMenu={(event, edge) => { const id = Number(edge.id); openContextMenu(event, undefined, selectedEdgeIds.length > 1 && selectedEdgeIds.includes(id) ? selectedEdgeIds : [id]) }} onPaneContextMenu={event => openContextMenu(event)} onPaneClick={() => { setSelected(null); setSelectedIds([]); setSelectedEdgeIds([]) }} onNodeDragStop={(_, node) => void syncNode(node.id, { position_x: node.position.x, position_y: node.position.y })} onConnectStart={() => setConnectionHandles(true)} onConnectEnd={() => setConnectionHandles(false)} onConnect={onConnect} onMove={(_, viewport) => { if (Math.abs(viewport.zoom - zoomRef.current) >= 0.02) { zoomRef.current = viewport.zoom; setZoom(viewport.zoom) } }} nodeTypes={nodeTypes} deleteKeyCode={null} connectionRadius={32} proOptions={{ hideAttribution: true }} onlyRenderVisibleElements fitView minZoom={0.2} maxZoom={2} defaultEdgeOptions={{ type: 'bezier' }}>
         <Background variant={BackgroundVariant.Dots} color="#484252" gap={20} size={dotSize} />
       </ReactFlow>
-      <div className="timeline"><span>{formatPeriod(board)}</span><div className="timeline-scroll" onWheel={event => { if (event.deltaY) { event.currentTarget.scrollLeft += event.deltaY; event.preventDefault() } }}><div className="timeline-days">{days.map(date => { const datedNodes = board.nodes.filter(node => node.temporal_date === date).slice(0, 5); const day = Number(date.slice(8)); return <i key={date}><b className="timeline-bookmarks">{datedNodes.map(node => <em key={node.id} className={`timeline-bookmark ${node.type}`} title={node.title || node.track_data?.title || 'Воспоминание'} />)}</b><small>{day}</small></i> })}</div></div></div>
+      <div className="timeline"><span>{formatPeriod(board)}</span><div className="timeline-scroll" onWheel={event => { if (event.deltaY) { event.currentTarget.scrollLeft += event.deltaY; event.preventDefault() } }}><div className="timeline-days">{days.map(date => { const datedNodes = board.nodes.filter(node => node.temporal_date === date).slice(0, 5); const day = Number(date.slice(8)); return <i key={date}><b className="timeline-bookmarks">{datedNodes.map((node, index) => <em key={node.id} className={`timeline-bookmark ${node.type}`} style={{ bottom: index * 9 }} title={node.title || node.track_data?.title || 'Воспоминание'} />)}</b><small>{day}</small></i> })}</div></div></div>
     </section>
     <Editor node={selected} boardStartDate={board.start_date} boardEndDate={board.end_date} onClose={closeEditor} onSave={save} onRequestDelete={() => setDeleteDialog(true)} onDeleteAsset={removeAsset} onUpdateAsset={updateAsset} onReorderAssets={reorderAssets} onPreview={preview} onCreate={create} />
     {contextMenu && <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}>{contextMenu.edgeIds?.length ? <><p>{contextMenu.edgeIds.length > 1 ? 'Связи' : 'Связь'}</p><button className="context-danger" onClick={() => { void onEdgesDelete(edges.filter(edge => contextMenu.edgeIds?.includes(Number(edge.id)))); setContextMenu(null) }}>Удалить {contextMenu.edgeIds.length > 1 ? 'связи' : 'связь'}</button></> : contextMenu.nodeIds && contextMenu.nodeIds.length > 1 ? <><p>Выбрано: {contextMenu.nodeIds.length}</p><button className="context-danger" onClick={() => { setDeleteDialog(true); setContextMenu(null) }}>Удалить выбранные</button></> : contextMenu.nodeId ? <><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) setClipboard(node); setContextMenu(null) }}>Копировать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) { setClipboard(node); setSelectedIds([node.id]); void remove() } setContextMenu(null) }}>Вырезать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) void duplicate(node); setContextMenu(null) }}>Дублировать</button></> : <>{clipboard && <button onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(clipboard.type, point, clipboard); setContextMenu(null) }}>Вставить</button>}<p>Создать</p>{(['note', 'media', 'track'] as NodeType[]).map(type => <button key={type} onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(type, point); setContextMenu(null) }}>{type === 'note' ? 'Заметку' : type === 'media' ? 'Медиа' : 'Музыку'}</button>)}</>}</div>}

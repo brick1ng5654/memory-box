@@ -25,8 +25,8 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
   const coverUrl = node.track_data?.cover_url || node.track_data?.spotify_cover_url
   const showHandles = selected || hasConnections || node.isConnecting
   useEffect(() => { updateNodeInternals(id) }, [hasConnections, id, playlistOpen, node.isConnecting, selected, updateNodeInternals])
-  return <div className={`memory-card ${node.type} ${largeCover ? 'music-large' : ''} ${selected ? 'selected' : ''}`}>
-    {node.type === 'media' && <NodeResizer isVisible={selected} minWidth={220} minHeight={170} maxWidth={760} maxHeight={650} lineClassName="resize-line" handleClassName="resize-handle" />}
+  return <div className={`memory-card ${node.type} ${largeCover ? 'music-large' : ''} ${node.height ? 'sized' : ''} ${selected ? 'selected' : ''}`}>
+    {(node.type === 'media' || node.type === 'note') && <NodeResizer isVisible={selected} minWidth={node.type === 'media' ? 220 : 180} minHeight={node.type === 'media' ? 170 : 110} maxWidth={760} maxHeight={650} lineClassName="resize-line" handleClassName="resize-handle" />}
     <Handle className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="target" position={Position.Left} style={{ top: '50%', transform: 'translateY(-50%)' }} />
     <div className="card-kicker"><span>{icons[node.type]} {labels[node.type]}</span>{node.temporal_date && <time>{new Date(`${node.temporal_date}T00:00:00`).getDate()} июля</time>}</div>
     {node.type === 'media' && <MediaPreview assets={node.media_assets} onOpen={node.onOpenMedia} />}
