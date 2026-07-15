@@ -61,6 +61,7 @@ class NodeCreate(BaseModel):
     text_content: str | None = None
     position_x: float = 0
     position_y: float = 0
+    z_index: int = 0
     width: float | None = None
     height: float | None = None
     temporal_date: date | None = None
@@ -72,6 +73,7 @@ class NodeUpdate(BaseModel):
     text_content: str | None = None
     position_x: float | None = None
     position_y: float | None = None
+    z_index: int | None = None
     width: float | None = None
     height: float | None = None
     temporal_date: date | None = None

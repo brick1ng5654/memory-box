@@ -46,6 +46,7 @@ class MemoryNode(Base):
     text_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     position_x: Mapped[float] = mapped_column(default=0)
     position_y: Mapped[float] = mapped_column(default=0)
+    z_index: Mapped[int] = mapped_column(Integer, default=0)
     width: Mapped[float | None] = mapped_column(nullable=True)
     height: Mapped[float | None] = mapped_column(nullable=True)
     temporal_date: Mapped[date | None] = mapped_column(Date, nullable=True)

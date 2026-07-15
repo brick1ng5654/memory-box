@@ -13,7 +13,7 @@ const toDateKey = (value: Date) => `${value.getFullYear()}-${String(value.getMon
 const todayKey = () => toDateKey(new Date())
 const toFlowNode = (node: MemoryNode, onOpenMedia: (assets: Asset[], index: number) => void): FlowMemoryNode => ({
   id: String(node.id), type: 'memory', position: { x: node.position_x, y: node.position_y },
-  style: { width: node.width ?? (node.type === 'media' ? 300 : 230), height: node.height ?? (node.type === 'media' ? 260 : undefined) },
+  style: { width: node.width ?? (node.type === 'media' ? 300 : 230), height: node.height ?? (node.type === 'media' ? 260 : undefined), zIndex: node.z_index },
   data: { ...node, onOpenMedia },
 })
 const toFlowEdge = (edge: MemoryEdge): Edge => ({
@@ -89,21 +89,32 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   const replaceNode = useCallback((updated: MemoryNode) => {
     setNodes(list => list.map(node => node.id === String(updated.id) ? {
       ...node,
-      style: { ...node.style, width: updated.width ?? (updated.type === 'media' ? 300 : 230), height: updated.height ?? (updated.type === 'media' ? 260 : undefined) },
+      style: { ...node.style, width: updated.width ?? (updated.type === 'media' ? 300 : 230), height: updated.height ?? (updated.type === 'media' ? 260 : undefined), zIndex: updated.z_index },
       data: { ...updated, onOpenMedia: openMedia },
     } : node))
     setBoard(current => current ? { ...current, nodes: current.nodes.map(node => node.id === updated.id ? updated : node) } : current)
     setSelected(current => current?.id === updated.id ? updated : current)
   }, [openMedia, setNodes])
+  const setLayer = async (ids: number[], direction: 'front' | 'back') => {
+    if (!board || !ids.length) return
+    const selectedSet = new Set(ids)
+    const targets = board.nodes.filter(node => selectedSet.has(node.id)).sort((a, b) => a.z_index - b.z_index || a.id - b.id)
+    const boundary = direction === 'front' ? Math.max(0, ...board.nodes.map(node => node.z_index)) : Math.min(0, ...board.nodes.map(node => node.z_index))
+    const start = direction === 'front' ? boundary + 1 : boundary - targets.length
+    try {
+      const saved = await Promise.all(targets.map((node, index) => api.updateNode(node.id, { z_index: start + index })))
+      saved.forEach(replaceNode)
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось изменить порядок слоёв') }
+  }
   const syncNode = useCallback(async (id: string, data: Partial<MemoryNode>) => {
     try {
       const saved = await api.updateNode(Number(id), data)
       setNodes(current => current.map(node => node.id === id ? {
         ...node, position: { x: saved.position_x, y: saved.position_y },
-        style: { ...node.style, width: saved.width ?? node.style?.width, height: saved.height ?? node.style?.height },
-        data: { ...node.data, position_x: saved.position_x, position_y: saved.position_y, width: saved.width, height: saved.height },
+        style: { ...node.style, width: saved.width ?? node.style?.width, height: saved.height ?? node.style?.height, zIndex: saved.z_index },
+        data: { ...node.data, position_x: saved.position_x, position_y: saved.position_y, z_index: saved.z_index, width: saved.width, height: saved.height },
       } : node))
-      setBoard(current => current ? { ...current, nodes: current.nodes.map(node => node.id === saved.id ? { ...node, position_x: saved.position_x, position_y: saved.position_y, width: saved.width, height: saved.height } : node) } : current)
+      setBoard(current => current ? { ...current, nodes: current.nodes.map(node => node.id === saved.id ? { ...node, position_x: saved.position_x, position_y: saved.position_y, z_index: saved.z_index, width: saved.width, height: saved.height } : node) } : current)
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось сохранить изменения') }
   }, [setNodes])
   const onNodesChange = useCallback((changes: NodeChange<FlowMemoryNode>[]) => {
@@ -151,7 +162,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
       const media = type === 'media'
       const node = await api.createNode(board.id, {
         type, title: source?.title || '', text_content: source?.text_content,
-        position_x: position?.x ?? 100 + index * 40, position_y: position?.y ?? 120 + index * 30,
+        position_x: position?.x ?? 100 + index * 40, position_y: position?.y ?? 120 + index * 30, z_index: Math.max(0, ...nodes.map(item => item.data.z_index)) + 1,
         width: source?.width ?? (media ? 300 : type === 'note' ? 230 : undefined), height: source?.height ?? (media ? 260 : undefined),
         temporal_date: source?.temporal_date,
         track_data: type === 'track' ? source?.track_data || { title: '', artist: '', kind: 'track', cover_size: 'small', playlist_items: [], collapsed_item_limit: 3 } : undefined,
@@ -245,7 +256,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
       <div className="timeline"><span>{formatPeriod(board)}</span><div className="timeline-scroll" onWheel={event => { if (event.deltaY) { event.currentTarget.scrollLeft += event.deltaY; event.preventDefault() } }}><div className="timeline-days">{days.map(date => { const datedNodes = board.nodes.filter(node => node.temporal_date === date).slice(0, 5); const day = Number(date.slice(8)); return <i key={date}><b className="timeline-bookmarks">{datedNodes.map((node, index) => <em key={node.id} className={`timeline-bookmark ${node.type}`} style={{ bottom: index * 9 }} title={node.title || node.track_data?.title || 'Воспоминание'} />)}</b><small>{day}</small></i> })}</div></div></div>
     </section>
     <Editor node={selected} boardStartDate={board.start_date} boardEndDate={board.end_date} onClose={closeEditor} onSave={save} onRequestDelete={() => setDeleteDialog(true)} onDeleteAsset={removeAsset} onUpdateAsset={updateAsset} onReorderAssets={reorderAssets} onPreview={preview} onCreate={create} />
-    {contextMenu && <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}>{contextMenu.edgeIds?.length ? <><p>{contextMenu.edgeIds.length > 1 ? 'Связи' : 'Связь'}</p><button className="context-danger" onClick={() => { void onEdgesDelete(edges.filter(edge => contextMenu.edgeIds?.includes(Number(edge.id)))); setContextMenu(null) }}>Удалить {contextMenu.edgeIds.length > 1 ? 'связи' : 'связь'}</button></> : contextMenu.nodeIds && contextMenu.nodeIds.length > 1 ? <><p>Выбрано: {contextMenu.nodeIds.length}</p><button className="context-danger" onClick={() => { setDeleteDialog(true); setContextMenu(null) }}>Удалить выбранные</button></> : contextMenu.nodeId ? <><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) setClipboard(node); setContextMenu(null) }}>Копировать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) { setClipboard(node); setSelectedIds([node.id]); void remove() } setContextMenu(null) }}>Вырезать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) void duplicate(node); setContextMenu(null) }}>Дублировать</button></> : <>{clipboard && <button onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(clipboard.type, point, clipboard); setContextMenu(null) }}>Вставить</button>}<p>Создать</p>{(['note', 'media', 'track'] as NodeType[]).map(type => <button key={type} onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(type, point); setContextMenu(null) }}>{type === 'note' ? 'Заметку' : type === 'media' ? 'Медиа' : 'Музыку'}</button>)}</>}</div>}
+    {contextMenu && <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}>{contextMenu.edgeIds?.length ? <><p>{contextMenu.edgeIds.length > 1 ? 'Связи' : 'Связь'}</p><button className="context-danger" onClick={() => { void onEdgesDelete(edges.filter(edge => contextMenu.edgeIds?.includes(Number(edge.id)))); setContextMenu(null) }}>Удалить {contextMenu.edgeIds.length > 1 ? 'связи' : 'связь'}</button></> : contextMenu.nodeIds && contextMenu.nodeIds.length > 1 ? <><p>Выбрано: {contextMenu.nodeIds.length}</p><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'front'); setContextMenu(null) }}>На передний план</button><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'back'); setContextMenu(null) }}>На задний план</button><button className="context-danger" onClick={() => { setDeleteDialog(true); setContextMenu(null) }}>Удалить выбранные</button></> : contextMenu.nodeId ? <><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) setClipboard(node); setContextMenu(null) }}>Копировать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) { setClipboard(node); setSelectedIds([node.id]); void remove() } setContextMenu(null) }}>Вырезать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) void duplicate(node); setContextMenu(null) }}>Дублировать</button><button onClick={() => { void setLayer([contextMenu.nodeId!], 'front'); setContextMenu(null) }}>На передний план</button><button onClick={() => { void setLayer([contextMenu.nodeId!], 'back'); setContextMenu(null) }}>На задний план</button></> : <>{clipboard && <button onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(clipboard.type, point, clipboard); setContextMenu(null) }}>Вставить</button>}<p>Создать</p>{(['note', 'media', 'track'] as NodeType[]).map(type => <button key={type} onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(type, point); setContextMenu(null) }}>{type === 'note' ? 'Заметку' : type === 'media' ? 'Медиа' : 'Музыку'}</button>)}</>}</div>}
     {deleteDialog && selectedIds.length > 0 && <div className="confirm-backdrop"><div className="confirm-dialog"><p className="eyebrow">Удаление</p><h2>Удалить {selectedIds.length > 1 ? 'выбранные воспоминания' : 'воспоминание'}?</h2><p>Карточки, их файлы и связи будут удалены.</p><div><button onClick={() => setDeleteDialog(false)}>Отмена</button><button ref={confirmButton} className="confirm-delete" onClick={() => { setDeleteDialog(false); void remove() }}>Подтвердить</button></div></div></div>}
     {activeAsset && <div className="lightbox" onClick={() => setLightbox(null)}><button className="lightbox-close" onClick={() => setLightbox(null)}>×</button>{lightbox.assets.length > 1 && <button className="lightbox-nav prev" onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index: (current.index - 1 + current.assets.length) % current.assets.length } : current) }}>‹</button>}<div className="lightbox-content" onClick={event => event.stopPropagation()} key={activeAsset.id}>{activeAsset.mime_type.startsWith('image/') ? <img src={mediaUrl(activeAsset.storage_path)} alt={activeAsset.original_filename} /> : <video src={mediaUrl(activeAsset.storage_path)} controls autoPlay />}</div>{lightbox.assets.length > 1 && <button className="lightbox-nav next" onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index: (current.index + 1) % current.assets.length } : current) }}>›</button>}<div className="lightbox-footer"><p>{activeAsset.original_filename} {lightbox.assets.length > 1 && `• ${lightbox.index + 1}/${lightbox.assets.length}`}</p>{lightbox.assets.length > 1 && <div className="lightbox-thumbs">{lightbox.assets.map((asset, index) => <button key={asset.id} className={index === lightbox.index ? 'active' : ''} onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index } : current) }}>{asset.mime_type.startsWith('image/') ? <img src={mediaUrl(asset.preview_path || asset.storage_path)} alt={asset.original_filename} /> : <video src={mediaUrl(asset.storage_path)} muted preload="metadata" />}</button>)}</div>}</div></div>}
   </main>

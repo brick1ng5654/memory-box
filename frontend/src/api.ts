@@ -3,7 +3,7 @@ export type Asset = { id: number; original_filename: string; storage_path: strin
 export type PlaylistItem = { title: string; artist: string; cover_url?: string | null; is_favorite: boolean }
 export type Track = { title: string; artist: string; kind: 'track' | 'playlist'; cover_size: 'small' | 'large'; playlist_items: PlaylistItem[]; collapsed_item_limit: number; spotify_id?: string | null; cover_url?: string | null; spotify_cover_url?: string | null }
 export type SpotifyTrack = { id: string; title: string; artist: string; cover_url?: string | null }
-export type MemoryNode = { id: number; board_id: number; type: NodeType; title: string; text_content?: string | null; position_x: number; position_y: number; width?: number | null; height?: number | null; temporal_date?: string | null; media_assets: Asset[]; track_data?: Track | null }
+export type MemoryNode = { id: number; board_id: number; type: NodeType; title: string; text_content?: string | null; position_x: number; position_y: number; z_index: number; width?: number | null; height?: number | null; temporal_date?: string | null; media_assets: Asset[]; track_data?: Track | null }
 export type MemoryEdge = { id: number; board_id: number; source_node_id: number; target_node_id: number; label?: string | null }
 export type Board = { id: number; title: string; year: number; month: number; start_date: string; end_date: string; nodes: MemoryNode[]; edges: MemoryEdge[] }
 
