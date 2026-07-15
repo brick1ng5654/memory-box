@@ -52,8 +52,10 @@ def test_delete_board(client):
 def test_edges_and_safe_node_deletion(client):
     current = board(client)
     first = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "note"}).json()
-    second = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "track", "track_data": {"kind": "playlist", "title": "July", "playlist_items": [{"title": "Song", "artist": "Artist"}, {"title": "Another", "artist": "Artist"}]}}).json()
+    second = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "track", "track_data": {"kind": "playlist", "title": "July", "collapsed_item_limit": 2, "playlist_items": [{"title": "Song", "artist": "Artist", "cover_url": "https://example.com/cover.jpg", "is_favorite": True}, {"title": "Another", "artist": "Artist", "is_favorite": False}]}}).json()
     assert len(second["track_data"]["playlist_items"]) == 2
+    assert second["track_data"]["collapsed_item_limit"] == 2
+    assert second["track_data"]["playlist_items"][0]["is_favorite"] is True
     edge = client.post(f"/api/boards/{current['id']}/edges", json={"source_node_id": first["id"], "target_node_id": second["id"]})
     assert edge.status_code == 201
     assert client.delete(f"/api/nodes/{first['id']}").status_code == 204

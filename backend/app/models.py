@@ -81,6 +81,7 @@ class TrackData(Base):
     kind: Mapped[MusicKind] = mapped_column(Enum(MusicKind), default=MusicKind.track)
     cover_size: Mapped[CoverSize] = mapped_column(Enum(CoverSize), default=CoverSize.small)
     playlist_items: Mapped[list] = mapped_column(JSON, default=list)
+    collapsed_item_limit: Mapped[int] = mapped_column(Integer, default=3)
     spotify_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     cover_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     spotify_cover_url: Mapped[str | None] = mapped_column(String(500), nullable=True)

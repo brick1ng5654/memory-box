@@ -40,11 +40,14 @@ def initialise():
     MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
     board_columns = {column["name"] for column in inspect(engine).get_columns("boards")}
+    track_columns = {column["name"] for column in inspect(engine).get_columns("track_data")}
     with engine.begin() as connection:
         if "start_date" not in board_columns:
             connection.execute(text("ALTER TABLE boards ADD COLUMN start_date DATE"))
         if "end_date" not in board_columns:
             connection.execute(text("ALTER TABLE boards ADD COLUMN end_date DATE"))
+        if "collapsed_item_limit" not in track_columns:
+            connection.execute(text("ALTER TABLE track_data ADD COLUMN collapsed_item_limit INTEGER NOT NULL DEFAULT 3"))
     with Session(engine) as db:
         if not db.scalar(select(Board.id).limit(1)):
             db.add(Board(title="Июль 2026", year=2026, month=7, start_date=date(2026, 7, 1), end_date=date(2026, 7, 31)))

@@ -8,6 +8,8 @@ from .models import CoverSize, MusicKind, NodeType
 class PlaylistItem(BaseModel):
     title: str = ""
     artist: str = ""
+    cover_url: str | None = None
+    is_favorite: bool = False
 
 
 class TrackDataPayload(BaseModel):
@@ -16,6 +18,7 @@ class TrackDataPayload(BaseModel):
     kind: MusicKind = MusicKind.track
     cover_size: CoverSize = CoverSize.small
     playlist_items: list[PlaylistItem] = []
+    collapsed_item_limit: int = Field(default=3, ge=0, le=10)
     spotify_id: str | None = None
     cover_url: str | None = None
     spotify_cover_url: str | None = None

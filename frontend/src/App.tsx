@@ -154,7 +154,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
         position_x: position?.x ?? 100 + index * 40, position_y: position?.y ?? 120 + index * 30,
         width: source?.width ?? (media ? 300 : type === 'note' ? 230 : undefined), height: source?.height ?? (media ? 260 : undefined),
         temporal_date: source?.temporal_date,
-        track_data: type === 'track' ? source?.track_data || { title: '', artist: '', kind: 'track', cover_size: 'small', playlist_items: [] } : undefined,
+        track_data: type === 'track' ? source?.track_data || { title: '', artist: '', kind: 'track', cover_size: 'small', playlist_items: [], collapsed_item_limit: 3 } : undefined,
       })
       setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia), selected: true }])
       setBoard(current => current ? { ...current, nodes: [...current.nodes, node] } : current)
