@@ -37,11 +37,11 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
   useEffect(() => { updateNodeInternals(id) }, [id, playlistOpen, node.isConnecting, selected, updateNodeInternals])
 
   return <div className={`memory-card ${node.type} ${isPlaylist ? 'playlist-card' : ''} ${largeCover ? 'music-large' : ''} ${node.height ? 'sized' : ''} ${selected ? 'selected' : ''}`}>
-    {(node.type === 'media' || node.type === 'note' || node.type === 'track') && <NodeResizer isVisible={selected} minWidth={node.type === 'media' ? 220 : node.type === 'track' ? 280 : 180} minHeight={node.type === 'media' ? 170 : node.type === 'track' ? largeCover ? 280 : 140 : 110} maxWidth={850} maxHeight={760} lineClassName="resize-line" handleClassName={node.type === 'track' ? 'resize-handle music-resize-handle' : 'resize-handle'} />}
+    {(node.type === 'media' || node.type === 'note' || node.type === 'track') && <NodeResizer isVisible={selected} minWidth={node.type === 'media' ? 220 : node.type === 'track' ? isPlaylist && largeCover ? 320 : 280 : 180} minHeight={node.type === 'media' ? 170 : node.type === 'track' ? isPlaylist && largeCover ? 320 : isPlaylist ? 205 : largeCover ? 280 : 140 : 110} maxWidth={850} maxHeight={760} lineClassName="resize-line" handleClassName={node.type === 'track' ? 'resize-handle music-resize-handle' : 'resize-handle'} />}
     <Handle className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="target" position={Position.Left} style={{ top: '50%', transform: 'translateY(-50%)' }} />
     <div className="card-kicker"><span>{icons[node.type]} {labels[node.type]}</span>{node.temporal_date && <time>{new Date(`${node.temporal_date}T00:00:00`).getDate()} июля</time>}</div>
     {node.type === 'media' && <MediaPreview assets={node.media_assets} onOpen={node.onOpenMedia} />}
-    {node.type === 'track' && coverUrl && <img className="track-cover" src={coverUrl} alt="" />}
+    {node.type === 'track' && (coverUrl ? <img className="track-cover" src={coverUrl} alt="" /> : <div className="track-cover track-cover-placeholder" aria-hidden="true">♪</div>)}
     {!isPlaylist && node.type !== 'track' && !hideTitle && <h3>{node.title}</h3>}
     {node.type === 'note' && node.text_content && <p>{node.text_content}</p>}
     {node.type === 'track' && !isPlaylist && <div className="track-info">{!hideTitle && <h3>{node.track_data?.title || 'Без названия'}</h3>}<p>{node.track_data?.artist || 'Исполнитель не указан'}</p></div>}
