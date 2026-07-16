@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Handle, Node, NodeProps, NodeResizer, Position, useStore, useUpdateNodeInternals } from '@xyflow/react'
+import { Handle, Node, NodeProps, NodeResizer, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { Asset, MemoryNode, PlaylistItem, mediaUrl } from './api'
 
 const labels = { note: 'Заметка', media: 'Медиа', track: 'Музыка' }
@@ -26,15 +26,14 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
   const node = data
   const [playlistOpen, setPlaylistOpen] = useState(false)
   const updateNodeInternals = useUpdateNodeInternals()
-  const hasConnections = useStore(state => state.edges.some(edge => edge.source === id || edge.target === id))
   const isPlaylist = node.type === 'track' && node.track_data?.kind === 'playlist'
   const playlistItems = node.track_data?.playlist_items || []
   const playlistPreview = playlistItems.filter(item => item.is_favorite).slice(0, node.track_data?.collapsed_item_limit ?? 3)
   const largeCover = node.type === 'track' && node.track_data?.cover_size === 'large'
   const coverUrl = node.track_data?.cover_url || (isPlaylist ? playlistItems[0]?.cover_url : node.track_data?.spotify_cover_url)
   const hideTitle = (node.type === 'media' && !node.title) || (isPlaylist && !node.track_data?.title)
-  const showHandles = selected || hasConnections || node.isConnecting
-  useEffect(() => { updateNodeInternals(id) }, [hasConnections, id, playlistOpen, node.isConnecting, selected, updateNodeInternals])
+  const showHandles = selected || node.isConnecting
+  useEffect(() => { updateNodeInternals(id) }, [id, playlistOpen, node.isConnecting, selected, updateNodeInternals])
 
   return <div className={`memory-card ${node.type} ${isPlaylist ? 'playlist-card' : ''} ${largeCover ? 'music-large' : ''} ${node.height ? 'sized' : ''} ${selected ? 'selected' : ''}`}>
     {(node.type === 'media' || node.type === 'note' || node.type === 'track') && <NodeResizer isVisible={selected} minWidth={node.type === 'media' ? 220 : node.type === 'track' ? 280 : 180} minHeight={node.type === 'media' ? 170 : node.type === 'track' ? largeCover ? 280 : 140 : 110} maxWidth={850} maxHeight={760} lineClassName="resize-line" handleClassName={node.type === 'track' ? 'resize-handle music-resize-handle' : 'resize-handle'} />}

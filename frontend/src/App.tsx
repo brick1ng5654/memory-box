@@ -44,6 +44,8 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   const edgeSelectionRef = useRef<number[]>([])
   const contextSelectionRef = useRef<{ nodeIds: number[]; edgeIds: number[] }>({ nodeIds: [], edgeIds: [] })
   const zoomRef = useRef(1)
+  const connectionSourceRef = useRef<string | null>(null)
+  const connectionCandidateRef = useRef<string | null>(null)
 
   const openMedia = useCallback((assets: Asset[], index: number) => setLightbox({ assets, index }), [])
   const load = useCallback(async () => {
@@ -136,9 +138,26 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
       setBoard(current => current ? { ...current, edges: [...current.edges, saved] } : current)
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось создать связь') }
   }, [board, setEdges])
-  const setConnectionHandles = useCallback((isConnecting: boolean) => {
-    setNodes(current => current.map(node => ({ ...node, data: { ...node.data, isConnecting } })))
+  const setConnectionCandidate = useCallback((candidateId: string | null) => {
+    if (connectionCandidateRef.current === candidateId) return
+    connectionCandidateRef.current = candidateId
+    setNodes(current => current.map(node => ({ ...node, data: { ...node.data, isConnecting: node.id === candidateId } })))
   }, [setNodes])
+  const onConnectionPointerMove = useCallback((event: React.MouseEvent) => {
+    const sourceId = connectionSourceRef.current
+    if (!sourceId) return
+    const cursor = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+    const closest = nodesRef.current.reduce<{ id: string; distance: number } | null>((best, node) => {
+      if (node.id === sourceId) return best
+      const width = Number(node.measured?.width ?? node.width ?? node.style?.width ?? 0)
+      const height = Number(node.measured?.height ?? node.height ?? node.style?.height ?? 0)
+      const centerX = node.position.x + width / 2
+      const centerY = node.position.y + height / 2
+      const distance = (centerX - cursor.x) ** 2 + (centerY - cursor.y) ** 2
+      return !best || distance < best.distance ? { id: node.id, distance } : best
+    }, null)
+    setConnectionCandidate(closest?.id ?? null)
+  }, [screenToFlowPosition, setConnectionCandidate])
   const onEdgesDelete = useCallback(async (deleted: Edge[]) => {
     await Promise.all(deleted.map(edge => api.deleteEdge(Number(edge.id))))
     setEdges(current => current.filter(edge => !deleted.some(item => Number(item.id) === Number(edge.id))))
@@ -252,7 +271,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
     <header><div><input aria-label="Название доски" value={board.title} onChange={event => setBoard({ ...board, title: event.target.value })} onBlur={async () => { try { await api.renameBoard(board.id, board.title) } catch { setNotice('Не удалось сохранить название') } }} /></div><button className="boards-link" onClick={onHome}>Все доски</button></header>
     {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
     <section className="canvas-wrap" onMouseDownCapture={event => { if (event.button === 2) contextSelectionRef.current = { nodeIds: nodes.filter(node => node.selected).map(node => Number(node.id)), edgeIds: edges.filter(edge => edge.selected).map(edge => Number(edge.id)) } }} onContextMenuCapture={event => { const target = event.target as HTMLElement; const nodeElement = target.closest<HTMLElement>('.react-flow__node'); const edgeElement = target.closest<HTMLElement>('.react-flow__edge'); const nodeId = Number(nodeElement?.dataset.id); const edgeId = Number(edgeElement?.dataset.id); openContextMenu(event, Number.isFinite(nodeId) ? nodeId : undefined, Number.isFinite(edgeId) ? [edgeId] : undefined) }}>
-      <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onSelectionChange={onSelectionChange} onNodeClick={(_, node) => { setSelected(node.data); setSelectedIds([Number(node.id)]); setSelectedEdgeIds([]) }} onEdgeClick={(_, edge) => { setSelectedEdgeIds([Number(edge.id)]); setSelected(null); setSelectedIds([]) }} onNodeContextMenu={(event, node) => openContextMenu(event, Number(node.id))} onEdgeContextMenu={(event, edge) => { const id = Number(edge.id); openContextMenu(event, undefined, selectedEdgeIds.length > 1 && selectedEdgeIds.includes(id) ? selectedEdgeIds : [id]) }} onPaneContextMenu={event => openContextMenu(event)} onPaneClick={() => { setSelected(null); setSelectedIds([]); setSelectedEdgeIds([]) }} onNodeDragStop={(_, node) => void syncNode(node.id, { position_x: node.position.x, position_y: node.position.y })} onConnectStart={() => setConnectionHandles(true)} onConnectEnd={() => setConnectionHandles(false)} onConnect={onConnect} onMove={(_, viewport) => { if (Math.abs(viewport.zoom - zoomRef.current) >= 0.02) { zoomRef.current = viewport.zoom; setZoom(viewport.zoom) } }} nodeTypes={nodeTypes} deleteKeyCode={null} connectionRadius={32} proOptions={{ hideAttribution: true }} onlyRenderVisibleElements fitView minZoom={0.2} maxZoom={2} defaultEdgeOptions={{ type: 'bezier' }}>
+      <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onSelectionChange={onSelectionChange} onNodeClick={(_, node) => { setSelected(node.data); setSelectedIds([Number(node.id)]); setSelectedEdgeIds([]) }} onEdgeClick={(_, edge) => { setSelectedEdgeIds([Number(edge.id)]); setSelected(null); setSelectedIds([]) }} onNodeContextMenu={(event, node) => openContextMenu(event, Number(node.id))} onEdgeContextMenu={(event, edge) => { const id = Number(edge.id); openContextMenu(event, undefined, selectedEdgeIds.length > 1 && selectedEdgeIds.includes(id) ? selectedEdgeIds : [id]) }} onPaneContextMenu={event => openContextMenu(event)} onPaneClick={() => { setSelected(null); setSelectedIds([]); setSelectedEdgeIds([]) }} onNodeDragStop={(_, node) => void syncNode(node.id, { position_x: node.position.x, position_y: node.position.y })} onConnectStart={(_, params) => { connectionSourceRef.current = params.nodeId; setConnectionCandidate(null) }} onConnectEnd={() => { connectionSourceRef.current = null; setConnectionCandidate(null) }} onMouseMove={onConnectionPointerMove} onConnect={onConnect} onMove={(_, viewport) => { if (Math.abs(viewport.zoom - zoomRef.current) >= 0.02) { zoomRef.current = viewport.zoom; setZoom(viewport.zoom) } }} nodeTypes={nodeTypes} deleteKeyCode={null} connectionRadius={32} proOptions={{ hideAttribution: true }} onlyRenderVisibleElements fitView minZoom={0.2} maxZoom={2} defaultEdgeOptions={{ type: 'bezier' }}>
         <Background variant={BackgroundVariant.Dots} color="#484252" gap={20} size={dotSize} />
       </ReactFlow>
       <div className="timeline"><span>{formatPeriod(board)}</span><div className="timeline-scroll" onWheel={event => { if (event.deltaY) { event.currentTarget.scrollLeft += event.deltaY; event.preventDefault() } }}><div className="timeline-days">{days.map(date => { const datedNodes = board.nodes.filter(node => node.temporal_date === date).slice(0, 5); const day = Number(date.slice(8)); return <i key={date}><b className="timeline-bookmarks">{datedNodes.map((node, index) => <em key={node.id} className={`timeline-bookmark ${node.type}`} style={{ bottom: index * 9 }} title={node.title || node.track_data?.title || 'Воспоминание'} />)}</b><small>{day}</small></i> })}</div></div></div>
