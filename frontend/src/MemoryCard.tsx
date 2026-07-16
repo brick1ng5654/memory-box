@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Handle, Node, NodeProps, NodeResizer, Position, useStore, useUpdateNodeInternals } from '@xyflow/react'
+import { Handle, Node, NodeProps, NodeResizer, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { Asset, MemoryNode, PlaylistItem, mediaUrl } from './api'
 
 const labels = { note: 'Заметка', media: 'Медиа', track: 'Музыка' }
@@ -26,25 +26,24 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
   const node = data
   const [playlistOpen, setPlaylistOpen] = useState(false)
   const updateNodeInternals = useUpdateNodeInternals()
-  const hasConnections = useStore(state => state.edges.some(edge => edge.source === id || edge.target === id))
   const isPlaylist = node.type === 'track' && node.track_data?.kind === 'playlist'
   const playlistItems = node.track_data?.playlist_items || []
   const playlistPreview = playlistItems.filter(item => item.is_favorite).slice(0, node.track_data?.collapsed_item_limit ?? 3)
   const largeCover = node.type === 'track' && node.track_data?.cover_size === 'large'
   const coverUrl = node.track_data?.cover_url || (isPlaylist ? playlistItems[0]?.cover_url : node.track_data?.spotify_cover_url)
   const hideTitle = (node.type === 'media' && !node.title) || (isPlaylist && !node.track_data?.title)
-  const showHandles = selected || hasConnections || node.isConnecting
-  useEffect(() => { updateNodeInternals(id) }, [hasConnections, id, playlistOpen, node.isConnecting, selected, updateNodeInternals])
+  const showHandles = selected || node.isConnecting
+  useEffect(() => { updateNodeInternals(id) }, [id, playlistOpen, node.isConnecting, selected, updateNodeInternals])
 
   return <div className={`memory-card ${node.type} ${isPlaylist ? 'playlist-card' : ''} ${largeCover ? 'music-large' : ''} ${node.height ? 'sized' : ''} ${selected ? 'selected' : ''}`}>
-    {(node.type === 'media' || node.type === 'note') && <NodeResizer isVisible={selected} minWidth={node.type === 'media' ? 220 : 180} minHeight={node.type === 'media' ? 170 : 110} maxWidth={760} maxHeight={650} lineClassName="resize-line" handleClassName="resize-handle" />}
+    {(node.type === 'media' || node.type === 'note' || node.type === 'track') && <NodeResizer isVisible={selected} minWidth={node.type === 'media' ? 220 : node.type === 'track' ? 280 : 180} minHeight={node.type === 'media' ? 170 : node.type === 'track' ? largeCover ? 280 : 140 : 110} maxWidth={850} maxHeight={760} lineClassName="resize-line" handleClassName={node.type === 'track' ? 'resize-handle music-resize-handle' : 'resize-handle'} />}
     <Handle className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="target" position={Position.Left} style={{ top: '50%', transform: 'translateY(-50%)' }} />
     <div className="card-kicker"><span>{icons[node.type]} {labels[node.type]}</span>{node.temporal_date && <time>{new Date(`${node.temporal_date}T00:00:00`).getDate()} июля</time>}</div>
     {node.type === 'media' && <MediaPreview assets={node.media_assets} onOpen={node.onOpenMedia} />}
     {node.type === 'track' && coverUrl && <img className="track-cover" src={coverUrl} alt="" />}
-    {!isPlaylist && !hideTitle && <h3>{node.type === 'track' ? node.track_data?.title || 'Без названия' : node.title}</h3>}
+    {!isPlaylist && node.type !== 'track' && !hideTitle && <h3>{node.title}</h3>}
     {node.type === 'note' && node.text_content && <p>{node.text_content}</p>}
-    {node.type === 'track' && !isPlaylist && <p>{node.track_data?.artist || 'Исполнитель не указан'}</p>}
+    {node.type === 'track' && !isPlaylist && <div className="track-info">{!hideTitle && <h3>{node.track_data?.title || 'Без названия'}</h3>}<p>{node.track_data?.artist || 'Исполнитель не указан'}</p></div>}
     {isPlaylist && <div className="playlist-summary">
       {!hideTitle && <h3>{node.track_data?.title}</h3>}
       <p>{playlistItems.length} треков</p>
