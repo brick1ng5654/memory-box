@@ -69,6 +69,58 @@ def startup():
 app.mount("/media", StaticFiles(directory=str(MEDIA_ROOT)), name="media")
 
 
+def is_local_cover(path: str | None) -> bool:
+    return bool(path and path.startswith("covers/"))
+
+
+def remove_local_cover(path: str | None) -> None:
+    if is_local_cover(path):
+        (MEDIA_ROOT / path).unlink(missing_ok=True)
+
+
+def cache_cover(url: str | None) -> str | None:
+    """Download an external cover once, so the board does not depend on its source."""
+    if not url or is_local_cover(url) or not url.startswith(("https://", "http://")):
+        return url
+    try:
+        request = Request(url, headers={"User-Agent": "MemoryBox/1.0"})
+        with urlopen(request, timeout=8) as response:
+            content_type = response.headers.get_content_type()
+            if not content_type.startswith("image/"):
+                return url
+            content = response.read(10 * 1024 * 1024 + 1)
+        if not content or len(content) > 10 * 1024 * 1024:
+            return url
+    except (HTTPError, URLError, OSError, ValueError):
+        return url
+    extension = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}.get(content_type, ".jpg")
+    relative_path = f"covers/{uuid.uuid4().hex}{extension}"
+    destination = MEDIA_ROOT / relative_path
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(content)
+    return relative_path
+
+
+def localise_track_covers(track: dict) -> dict:
+    result = dict(track)
+    for field in ("cover_url", "spotify_cover_url"):
+        result[field] = cache_cover(result.get(field))
+    result["playlist_items"] = [
+        {**item, "cover_url": cache_cover(item.get("cover_url"))}
+        for item in result.get("playlist_items", [])
+    ]
+    return result
+
+
+def remove_track_covers(track: TrackData | None) -> None:
+    if not track:
+        return
+    remove_local_cover(track.cover_url)
+    remove_local_cover(track.spotify_cover_url)
+    for item in track.playlist_items or []:
+        remove_local_cover(item.get("cover_url"))
+
+
 def board_or_404(board_id: int, db: Session) -> Board:
     board = db.get(Board, board_id)
     if not board:
@@ -178,7 +230,7 @@ def update_board(board_id: int, payload: BoardUpdate, db: Session = Depends(get_
 
 @app.delete("/api/boards/{board_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_board(board_id: int, db: Session = Depends(get_db)):
-    statement = select(Board).options(joinedload(Board.nodes).joinedload(MemoryNode.media_assets)).where(Board.id == board_id)
+    statement = select(Board).options(joinedload(Board.nodes).joinedload(MemoryNode.media_assets), joinedload(Board.nodes).joinedload(MemoryNode.track_data)).where(Board.id == board_id)
     board = db.execute(statement).unique().scalar_one_or_none()
     if not board:
         raise HTTPException(404, "Доска не найдена")
@@ -187,6 +239,7 @@ def delete_board(board_id: int, db: Session = Depends(get_db)):
             for file_path in (asset.storage_path, asset.preview_path):
                 if file_path:
                     (MEDIA_ROOT / file_path).unlink(missing_ok=True)
+        remove_track_covers(node.track_data)
     db.delete(board)
     db.commit()
 
@@ -197,7 +250,8 @@ def create_node(board_id: int, payload: NodeCreate, db: Session = Depends(get_db
     node = MemoryNode(board_id=board_id, type=payload.type, title=payload.title, text_content=payload.text_content, position_x=payload.position_x, position_y=payload.position_y, z_index=payload.z_index, width=payload.width, height=payload.height, temporal_date=payload.temporal_date)
     if payload.type == NodeType.track:
         track = payload.track_data or {"title": payload.title}
-        node.track_data = TrackData(**(track.model_dump() if hasattr(track, "model_dump") else track))
+        raw_track = track.model_dump() if hasattr(track, "model_dump") else track
+        node.track_data = TrackData(**localise_track_covers(raw_track))
     db.add(node); db.commit()
     return node_or_404(node.id, db)
 
@@ -213,8 +267,21 @@ def update_node(node_id: int, payload: NodeUpdate, db: Session = Depends(get_db)
             raise HTTPException(400, "Данные трека допустимы только для узла типа track")
         if not node.track_data:
             node.track_data = TrackData(node_id=node.id)
-        for key, value in payload.track_data.model_dump().items():
+        next_track = localise_track_covers(payload.track_data.model_dump())
+        previous_track = node.track_data.model_dump() if hasattr(node.track_data, "model_dump") else {
+            "cover_url": node.track_data.cover_url,
+            "spotify_cover_url": node.track_data.spotify_cover_url,
+            "playlist_items": node.track_data.playlist_items,
+        }
+        for key, value in next_track.items():
             setattr(node.track_data, key, value)
+        for field in ("cover_url", "spotify_cover_url"):
+            if previous_track.get(field) != next_track.get(field):
+                remove_local_cover(previous_track.get(field))
+        previous_playlist_covers = {item.get("cover_url") for item in previous_track.get("playlist_items", [])}
+        next_playlist_covers = {item.get("cover_url") for item in next_track.get("playlist_items", [])}
+        for cover_path in previous_playlist_covers - next_playlist_covers:
+            remove_local_cover(cover_path)
     db.commit()
     return node_or_404(node.id, db)
 
@@ -231,6 +298,7 @@ def delete_node(node_id: int, db: Session = Depends(get_db)):
         for file_path in (asset.storage_path, asset.preview_path):
             if file_path:
                 (MEDIA_ROOT / file_path).unlink(missing_ok=True)
+    remove_track_covers(node.track_data)
     db.delete(node); db.commit()
 
 

@@ -12,7 +12,7 @@ const formatPeriod = (board: Pick<Board, 'start_date' | 'end_date'>) => board.st
 const toDateKey = (value: Date) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
 const todayKey = () => toDateKey(new Date())
 const defaultNodeWidth = (node: MemoryNode) => node.type === 'media' ? 300 : node.type === 'track' ? node.track_data?.cover_size === 'large' ? 320 : 340 : 230
-const defaultNodeHeight = (node: MemoryNode) => node.type === 'media' ? 260 : node.type === 'track' ? node.track_data?.cover_size === 'large' ? 390 : 180 : undefined
+const defaultNodeHeight = (node: MemoryNode) => node.type === 'media' ? 260 : node.type === 'track' ? node.track_data?.cover_size === 'large' ? node.track_data?.kind === 'playlist' ? 320 : 390 : node.track_data?.kind === 'playlist' ? 220 : 180 : undefined
 const toFlowNode = (node: MemoryNode, onOpenMedia: (assets: Asset[], index: number) => void): FlowMemoryNode => ({
   id: String(node.id), type: 'memory', position: { x: node.position_x, y: node.position_y },
   style: { width: node.width ?? defaultNodeWidth(node), height: node.height ?? defaultNodeHeight(node), zIndex: node.z_index },
