@@ -30,7 +30,8 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
   const playlistItems = node.track_data?.playlist_items || []
   const playlistPreview = playlistItems.filter(item => item.is_favorite).slice(0, node.track_data?.collapsed_item_limit ?? 3)
   const largeCover = node.type === 'track' && node.track_data?.cover_size === 'large'
-  const coverUrl = node.track_data?.cover_url || (isPlaylist ? playlistItems[0]?.cover_url : node.track_data?.spotify_cover_url)
+  const coverPath = node.track_data?.cover_url || (isPlaylist ? playlistItems[0]?.cover_url : node.track_data?.spotify_cover_url)
+  const coverUrl = coverPath?.startsWith('http') ? coverPath : mediaUrl(coverPath)
   const hideTitle = (node.type === 'media' && !node.title) || (isPlaylist && !node.track_data?.title)
   const showHandles = selected || node.isConnecting
   useEffect(() => { updateNodeInternals(id) }, [id, playlistOpen, node.isConnecting, selected, updateNodeInternals])

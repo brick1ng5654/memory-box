@@ -53,7 +53,7 @@ def test_delete_board(client):
 def test_edges_and_safe_node_deletion(client):
     current = board(client)
     first = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "note"}).json()
-    second = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "track", "track_data": {"kind": "playlist", "title": "July", "collapsed_item_limit": 2, "playlist_items": [{"title": "Song", "artist": "Artist", "cover_url": "https://example.com/cover.jpg", "is_favorite": True}, {"title": "Another", "artist": "Artist", "is_favorite": False}]}}).json()
+    second = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "track", "track_data": {"kind": "playlist", "title": "July", "collapsed_item_limit": 2, "playlist_items": [{"title": "Song", "artist": "Artist", "is_favorite": True}, {"title": "Another", "artist": "Artist", "is_favorite": False}]}}).json()
     assert len(second["track_data"]["playlist_items"]) == 2
     assert second["track_data"]["collapsed_item_limit"] == 2
     assert second["track_data"]["playlist_items"][0]["is_favorite"] is True
@@ -69,6 +69,28 @@ def test_spotify_search_explains_missing_configuration(client, monkeypatch):
     response = client.get("/api/spotify/search", params={"query": "Radiohead"})
     assert response.status_code == 503
     assert "SPOTIFY_CLIENT_ID" in response.json()["detail"]
+
+
+def test_track_covers_are_saved_in_local_media_volume(client, monkeypatch):
+    from email.message import Message
+    import app.main as main
+
+    class CoverResponse:
+        def __init__(self):
+            self.headers = Message()
+            self.headers["Content-Type"] = "image/png"
+        def read(self, _limit): return b"local-cover"
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+
+    monkeypatch.setattr(main, "urlopen", lambda *_args, **_kwargs: CoverResponse())
+    current = board(client)
+    created = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "track", "track_data": {"title": "Song", "artist": "Artist", "spotify_cover_url": "https://cdn.spotify.test/cover.png", "playlist_items": [{"title": "Playlist song", "cover_url": "https://cdn.spotify.test/item.png"}]}})
+    assert created.status_code == 201
+    track = created.json()["track_data"]
+    assert track["spotify_cover_url"].startswith("covers/")
+    assert track["playlist_items"][0]["cover_url"].startswith("covers/")
+    assert (main.MEDIA_ROOT / track["spotify_cover_url"]).exists()
 
 
 def test_upload_image(client):
