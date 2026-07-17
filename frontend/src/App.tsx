@@ -13,6 +13,10 @@ const toDateKey = (value: Date) => `${value.getFullYear()}-${String(value.getMon
 const todayKey = () => toDateKey(new Date())
 const defaultNodeWidth = (node: MemoryNode) => node.type === 'media' ? 300 : node.type === 'track' ? node.track_data?.cover_size === 'large' ? 320 : 340 : 230
 const defaultNodeHeight = (node: MemoryNode) => node.type === 'media' ? 260 : node.type === 'track' ? node.track_data?.cover_size === 'large' ? node.track_data?.kind === 'playlist' ? 320 : 390 : node.track_data?.kind === 'playlist' ? 220 : 180 : undefined
+const clipboardMediaExtensions: Record<string, string> = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+  'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/x-m4v': 'm4v',
+}
 const toFlowNode = (node: MemoryNode, onOpenMedia: (assets: Asset[], index: number) => void): FlowMemoryNode => ({
   id: String(node.id), type: 'memory', position: { x: node.position_x, y: node.position_y },
   style: { width: node.width ?? defaultNodeWidth(node), height: node.height ?? defaultNodeHeight(node), zIndex: node.z_index },
@@ -40,12 +44,15 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   const [zoom, setZoom] = useState(1)
   const confirmButton = useRef<HTMLButtonElement>(null)
   const nodesRef = useRef(nodes)
+  const selectedRef = useRef<MemoryNode | null>(null)
   const selectionRef = useRef<number[]>([])
   const edgeSelectionRef = useRef<number[]>([])
   const contextSelectionRef = useRef<{ nodeIds: number[]; edgeIds: number[] }>({ nodeIds: [], edgeIds: [] })
   const zoomRef = useRef(1)
   const connectionSourceRef = useRef<string | null>(null)
   const connectionCandidateRef = useRef<string | null>(null)
+  const canvasRef = useRef<HTMLElement>(null)
+  const canvasPointerRef = useRef<{ x: number; y: number } | null>(null)
 
   const openMedia = useCallback((assets: Asset[], index: number) => setLightbox({ assets, index }), [])
   const load = useCallback(async () => {
@@ -61,6 +68,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
 
   useEffect(() => { load() }, [load])
   useEffect(() => { nodesRef.current = nodes }, [nodes])
+  useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { if (deleteDialog) requestAnimationFrame(() => confirmButton.current?.focus()) }, [deleteDialog])
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -73,7 +81,6 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
         return
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && selected) { event.preventDefault(); setClipboard(selected); return }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v' && clipboard) { event.preventDefault(); void duplicate(clipboard); return }
       if (event.key === 'Delete' && selectedEdgeIds.length) {
         event.preventDefault()
         const ids = new Set(selectedEdgeIds)
@@ -176,8 +183,8 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
     setSelectedEdgeIds(edgeIds)
     setSelected(ids.length === 1 ? selection[0].data : null)
   }, [])
-  const create = async (type: NodeType, position?: { x: number; y: number }, source?: MemoryNode) => {
-    if (!board) return
+  const create = async (type: NodeType, position?: { x: number; y: number }, source?: Partial<MemoryNode>) => {
+    if (!board) return null
     try {
       const index = nodes.length
       const media = type === 'media'
@@ -192,8 +199,63 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
       setBoard(current => current ? { ...current, nodes: [...current.nodes, node] } : current)
       selectionRef.current = [node.id]
       setSelected(node); setSelectedIds([node.id])
+      return node
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось создать узел') }
+    return null
   }
+  const clipboardPosition = () => {
+    const pointer = canvasPointerRef.current
+    const bounds = canvasRef.current?.getBoundingClientRect()
+    return screenToFlowPosition(pointer || (bounds ? { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 } : { x: window.innerWidth / 2, y: window.innerHeight / 2 }))
+  }
+  const uploadPastedMedia = async (node: MemoryNode, files: File[]) => {
+    const errors: string[] = []
+    for (const [index, file] of files.entries()) {
+      const extension = clipboardMediaExtensions[file.type]
+      const uploadFile = file.name ? file : new File([file], `clipboard-${index + 1}.${extension}`, { type: file.type })
+      try { await api.upload(node.id, uploadFile) }
+      catch (error) { errors.push(error instanceof Error ? error.message : 'Не удалось загрузить файл') }
+    }
+    try { replaceNode(await api.node(node.id)) }
+    catch (error) { errors.push(error instanceof Error ? error.message : 'Не удалось обновить медиа') }
+    if (errors.length) setNotice(errors.join('\n'))
+  }
+  const pasteMedia = async (files: File[]) => {
+    const selectedMedia = selectedRef.current?.type === 'media' ? selectedRef.current : null
+    if (selectedMedia) { await uploadPastedMedia(selectedMedia, files); return }
+    const node = await create('media', clipboardPosition())
+    if (node) await uploadPastedMedia(node, files)
+  }
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      const target = event.target
+      if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]')) return
+      const clipboardData = event.clipboardData
+      if (!clipboardData) return
+      const pastedMedia = Array.from(clipboardData.items)
+        .filter(item => item.kind === 'file')
+        .map(item => item.getAsFile())
+        .filter((file): file is File => file !== null && file.type in clipboardMediaExtensions)
+      if (pastedMedia.length) {
+        event.preventDefault()
+        void pasteMedia(pastedMedia)
+        return
+      }
+      const hasUnsupportedMedia = Array.from(clipboardData.items).some(item => item.kind === 'file' && (item.type.startsWith('image/') || item.type.startsWith('video/')))
+      if (hasUnsupportedMedia) {
+        event.preventDefault()
+        setNotice('Поддерживаются JPEG, PNG, WebP, GIF, MP4, WebM и MOV')
+        return
+      }
+      const text = clipboardData.getData('text/plain')
+      if (text) {
+        event.preventDefault()
+        void create('note', clipboardPosition(), { text_content: text })
+      }
+    }
+    document.addEventListener('paste', onPaste, true)
+    return () => document.removeEventListener('paste', onPaste, true)
+  }, [board, nodes, screenToFlowPosition])
   const save = async (draft: Partial<MemoryNode>, files: File[] = []) => {
     if (!selected) return
     const updated = await api.updateNode(selected.id, { title: draft.title, text_content: draft.text_content, temporal_date: draft.temporal_date, track_data: draft.track_data })
@@ -270,7 +332,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   return <main className="app" onClick={() => setContextMenu(null)}>
     <header><div><input aria-label="Название доски" value={board.title} onChange={event => setBoard({ ...board, title: event.target.value })} onBlur={async () => { try { await api.renameBoard(board.id, board.title) } catch { setNotice('Не удалось сохранить название') } }} /></div><button className="boards-link" onClick={onHome}>Все доски</button></header>
     {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
-    <section className="canvas-wrap" onMouseDownCapture={event => { if (event.button === 2) contextSelectionRef.current = { nodeIds: nodes.filter(node => node.selected).map(node => Number(node.id)), edgeIds: edges.filter(edge => edge.selected).map(edge => Number(edge.id)) } }} onContextMenuCapture={event => { const target = event.target as HTMLElement; const nodeElement = target.closest<HTMLElement>('.react-flow__node'); const edgeElement = target.closest<HTMLElement>('.react-flow__edge'); const nodeId = Number(nodeElement?.dataset.id); const edgeId = Number(edgeElement?.dataset.id); openContextMenu(event, Number.isFinite(nodeId) ? nodeId : undefined, Number.isFinite(edgeId) ? [edgeId] : undefined) }}>
+    <section ref={canvasRef} className="canvas-wrap" onPointerMoveCapture={event => { canvasPointerRef.current = { x: event.clientX, y: event.clientY } }} onMouseDownCapture={event => { if (event.button === 2) contextSelectionRef.current = { nodeIds: nodes.filter(node => node.selected).map(node => Number(node.id)), edgeIds: edges.filter(edge => edge.selected).map(edge => Number(edge.id)) } }} onContextMenuCapture={event => { const target = event.target as HTMLElement; const nodeElement = target.closest<HTMLElement>('.react-flow__node'); const edgeElement = target.closest<HTMLElement>('.react-flow__edge'); const nodeId = Number(nodeElement?.dataset.id); const edgeId = Number(edgeElement?.dataset.id); openContextMenu(event, Number.isFinite(nodeId) ? nodeId : undefined, Number.isFinite(edgeId) ? [edgeId] : undefined) }}>
       <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onSelectionChange={onSelectionChange} onNodeClick={(_, node) => { setSelected(node.data); setSelectedIds([Number(node.id)]); setSelectedEdgeIds([]) }} onEdgeClick={(_, edge) => { setSelectedEdgeIds([Number(edge.id)]); setSelected(null); setSelectedIds([]) }} onNodeContextMenu={(event, node) => openContextMenu(event, Number(node.id))} onEdgeContextMenu={(event, edge) => { const id = Number(edge.id); openContextMenu(event, undefined, selectedEdgeIds.length > 1 && selectedEdgeIds.includes(id) ? selectedEdgeIds : [id]) }} onPaneContextMenu={event => openContextMenu(event)} onPaneClick={() => { setSelected(null); setSelectedIds([]); setSelectedEdgeIds([]) }} onNodeDragStop={(_, node) => void syncNode(node.id, { position_x: node.position.x, position_y: node.position.y })} onConnectStart={(_, params) => { connectionSourceRef.current = params.nodeId; setConnectionCandidate(null) }} onConnectEnd={() => { connectionSourceRef.current = null; setConnectionCandidate(null) }} onMouseMove={onConnectionPointerMove} onConnect={onConnect} onMove={(_, viewport) => { if (Math.abs(viewport.zoom - zoomRef.current) >= 0.02) { zoomRef.current = viewport.zoom; setZoom(viewport.zoom) } }} nodeTypes={nodeTypes} deleteKeyCode={null} connectionRadius={32} proOptions={{ hideAttribution: true }} onlyRenderVisibleElements fitView minZoom={0.2} maxZoom={2} defaultEdgeOptions={{ type: 'bezier' }}>
         <Background variant={BackgroundVariant.Dots} color="#484252" gap={20} size={dotSize} />
       </ReactFlow>
