@@ -193,6 +193,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
         position_x: position?.x ?? 100 + index * 40, position_y: position?.y ?? 120 + index * 30, z_index: Math.max(0, ...nodes.map(item => item.data.z_index)) + 1,
         width: source?.width ?? (media ? 300 : type === 'note' ? 230 : undefined), height: source?.height ?? (media ? 260 : undefined),
         temporal_date: source?.temporal_date,
+        show_type_label: source?.show_type_label ?? false, date_position: source?.date_position ?? 'bottom-center',
         track_data: type === 'track' ? source?.track_data || { title: '', artist: '', kind: 'track', cover_size: 'small', playlist_items: [], collapsed_item_limit: 3 } : undefined,
       })
       setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia), selected: true }])
@@ -258,7 +259,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   }, [board, nodes, screenToFlowPosition])
   const save = async (draft: Partial<MemoryNode>, files: File[] = []) => {
     if (!selected) return
-    const updated = await api.updateNode(selected.id, { title: draft.title, text_content: draft.text_content, temporal_date: draft.temporal_date, track_data: draft.track_data })
+    const updated = await api.updateNode(selected.id, { title: draft.title, text_content: draft.text_content, temporal_date: draft.temporal_date, show_type_label: draft.show_type_label, date_position: draft.date_position, track_data: draft.track_data })
     replaceNode(updated)
     const errors: string[] = []
     for (const file of files) {

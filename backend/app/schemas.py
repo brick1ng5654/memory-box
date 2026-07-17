@@ -1,8 +1,11 @@
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .models import CoverSize, MusicKind, NodeType
+
+DatePosition = Literal["top-left", "top-center", "top-right", "bottom-left", "bottom-center", "bottom-right"]
 
 
 class PlaylistItem(BaseModel):
@@ -65,6 +68,8 @@ class NodeCreate(BaseModel):
     width: float | None = None
     height: float | None = None
     temporal_date: date | None = None
+    show_type_label: bool = False
+    date_position: DatePosition = "bottom-center"
     track_data: TrackDataPayload | None = None
 
 
@@ -77,6 +82,8 @@ class NodeUpdate(BaseModel):
     width: float | None = None
     height: float | None = None
     temporal_date: date | None = None
+    show_type_label: bool = False
+    date_position: DatePosition = "bottom-center"
     track_data: TrackDataPayload | None = None
 
 
