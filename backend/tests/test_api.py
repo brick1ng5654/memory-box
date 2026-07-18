@@ -14,8 +14,9 @@ def test_initial_board_and_node_crud(client):
     assert created.status_code == 201
     node = created.json()
     assert node["show_type_label"] is False
+    assert node["show_date"] is True
     assert node["date_position"] == "bottom-center"
-    changed = client.patch(f"/api/nodes/{node['id']}", json={"position_x": 333, "z_index": 12, "width": 420, "height": 260, "title": "Вечерняя прогулка", "show_type_label": True, "date_position": "top-left"})
+    changed = client.patch(f"/api/nodes/{node['id']}", json={"position_x": 333, "z_index": 12, "width": 420, "height": 260, "title": "Вечерняя прогулка", "show_date": False, "show_type_label": True, "date_position": "top-left"})
     assert changed.status_code == 200
     assert changed.json()["position_x"] == 333
     assert changed.json()["z_index"] == 12
@@ -23,6 +24,7 @@ def test_initial_board_and_node_crud(client):
     assert changed.json()["height"] == 260
     assert changed.json()["title"] == "Вечерняя прогулка"
     assert changed.json()["show_type_label"] is True
+    assert changed.json()["show_date"] is False
     assert changed.json()["date_position"] == "top-left"
 
 
