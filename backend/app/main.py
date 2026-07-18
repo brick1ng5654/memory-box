@@ -63,6 +63,8 @@ def initialise():
             connection.execute(text("ALTER TABLE memory_nodes ADD COLUMN show_type_label INTEGER NOT NULL DEFAULT 0"))
         if "date_position" not in node_columns:
             connection.execute(text("ALTER TABLE memory_nodes ADD COLUMN date_position VARCHAR(20) NOT NULL DEFAULT 'bottom-center'"))
+        if "title_position" not in node_columns:
+            connection.execute(text("ALTER TABLE memory_nodes ADD COLUMN title_position VARCHAR(20) NOT NULL DEFAULT 'bottom-center'"))
         edge_columns = {column["name"] for column in inspect(engine).get_columns("memory_edges")}
         if "source_handle" not in edge_columns:
             connection.execute(text("ALTER TABLE memory_edges ADD COLUMN source_handle VARCHAR(20)"))
@@ -127,6 +129,39 @@ def localise_track_covers(track: dict) -> dict:
         for item in result.get("playlist_items", [])
     ]
     return result
+
+
+def spotify_track_cover_url(track_id: str) -> str | None:
+    """Fetch a cover only when a locally cached Spotify cover has disappeared."""
+    try:
+        token = spotify_access_token()
+        request = Request(f"https://api.spotify.com/v1/tracks/{track_id}", headers={"Authorization": f"Bearer {token}"})
+        with urlopen(request, timeout=5) as response:
+            images = json.loads(response.read().decode("utf-8")).get("album", {}).get("images") or []
+        return images[0].get("url") if images else None
+    except (HTTPException, HTTPError, URLError, ValueError, KeyError):
+        return None
+
+
+def restore_missing_track_covers(nodes: list[MemoryNode], db: Session) -> None:
+    repaired = False
+    for node in nodes:
+        track = node.track_data
+        if not track:
+            continue
+        cover_path = track.spotify_cover_url
+        if cover_path and not is_local_cover(cover_path):
+            cached_path = cache_cover(cover_path)
+            if cached_path != cover_path:
+                track.spotify_cover_url = cached_path
+                repaired = True
+        elif is_local_cover(cover_path) and not (MEDIA_ROOT / cover_path).is_file() and track.spotify_id:
+            cached_path = cache_cover(spotify_track_cover_url(track.spotify_id))
+            if cached_path and is_local_cover(cached_path):
+                track.spotify_cover_url = cached_path
+                repaired = True
+    if repaired:
+        db.commit()
 
 
 def remove_track_covers(track: TrackData | None) -> None:
@@ -202,6 +237,7 @@ def get_primary_board(db: Session = Depends(get_db)):
     if not board:
         initialise()
         board = db.execute(statement).unique().scalar_one_or_none()
+    restore_missing_track_covers(board.nodes, db)
     return board
 
 
@@ -225,6 +261,7 @@ def get_board(board_id: int, db: Session = Depends(get_db)):
     board = db.execute(statement).unique().scalar_one_or_none()
     if not board:
         raise HTTPException(404, "Доска не найдена")
+    restore_missing_track_covers(board.nodes, db)
     return board
 
 
@@ -264,7 +301,7 @@ def delete_board(board_id: int, db: Session = Depends(get_db)):
 @app.post("/api/boards/{board_id}/nodes", response_model=NodeRead, status_code=status.HTTP_201_CREATED)
 def create_node(board_id: int, payload: NodeCreate, db: Session = Depends(get_db)):
     board_or_404(board_id, db)
-    node = MemoryNode(board_id=board_id, type=payload.type, title=payload.title, text_content=payload.text_content, position_x=payload.position_x, position_y=payload.position_y, z_index=payload.z_index, width=payload.width, height=payload.height, temporal_date=payload.temporal_date, show_date=payload.show_date, show_type_label=payload.show_type_label, date_position=payload.date_position)
+    node = MemoryNode(board_id=board_id, type=payload.type, title=payload.title, text_content=payload.text_content, position_x=payload.position_x, position_y=payload.position_y, z_index=payload.z_index, width=payload.width, height=payload.height, temporal_date=payload.temporal_date, show_date=payload.show_date, show_type_label=payload.show_type_label, date_position=payload.date_position, title_position=payload.title_position)
     if payload.type == NodeType.track:
         track = payload.track_data or {"title": payload.title}
         raw_track = track.model_dump() if hasattr(track, "model_dump") else track
@@ -276,7 +313,7 @@ def create_node(board_id: int, payload: NodeCreate, db: Session = Depends(get_db
 @app.patch("/api/nodes/{node_id}", response_model=NodeRead)
 def update_node(node_id: int, payload: NodeUpdate, db: Session = Depends(get_db)):
     node = node_or_404(node_id, db)
-    for field in ("title", "text_content", "position_x", "position_y", "z_index", "width", "height", "temporal_date", "show_date", "show_type_label", "date_position"):
+    for field in ("title", "text_content", "position_x", "position_y", "z_index", "width", "height", "temporal_date", "show_date", "show_type_label", "date_position", "title_position"):
         if field in payload.model_fields_set:
             setattr(node, field, getattr(payload, field))
     if payload.track_data is not None:

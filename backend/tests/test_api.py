@@ -16,7 +16,8 @@ def test_initial_board_and_node_crud(client):
     assert node["show_type_label"] is False
     assert node["show_date"] is True
     assert node["date_position"] == "bottom-center"
-    changed = client.patch(f"/api/nodes/{node['id']}", json={"position_x": 333, "z_index": 12, "width": 420, "height": 260, "title": "Вечерняя прогулка", "show_date": False, "show_type_label": True, "date_position": "top-left"})
+    assert node["title_position"] == "bottom-center"
+    changed = client.patch(f"/api/nodes/{node['id']}", json={"position_x": 333, "z_index": 12, "width": 420, "height": 260, "title": "Вечерняя прогулка", "show_date": False, "show_type_label": True, "date_position": "top-left", "title_position": "top-right"})
     assert changed.status_code == 200
     assert changed.json()["position_x"] == 333
     assert changed.json()["z_index"] == 12
@@ -26,6 +27,7 @@ def test_initial_board_and_node_crud(client):
     assert changed.json()["show_type_label"] is True
     assert changed.json()["show_date"] is False
     assert changed.json()["date_position"] == "top-left"
+    assert changed.json()["title_position"] == "top-right"
 
 
 def test_create_and_list_boards(client):
@@ -118,6 +120,28 @@ def test_track_covers_are_saved_in_local_media_volume(client, monkeypatch):
     assert track["spotify_cover_url"].startswith("covers/")
     assert track["playlist_items"][0]["cover_url"].startswith("covers/")
     assert (main.MEDIA_ROOT / track["spotify_cover_url"]).exists()
+
+
+def test_missing_local_spotify_cover_is_repaired_once(client, monkeypatch):
+    from email.message import Message
+    import app.main as main
+
+    class CoverResponse:
+        def __init__(self):
+            self.headers = Message()
+            self.headers["Content-Type"] = "image/png"
+        def read(self, _limit): return b"repaired-cover"
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+
+    monkeypatch.setattr(main, "spotify_track_cover_url", lambda _track_id: "https://cdn.spotify.test/repaired.png")
+    monkeypatch.setattr(main, "urlopen", lambda *_args, **_kwargs: CoverResponse())
+    current = board(client)
+    created = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "track", "track_data": {"spotify_id": "spotify-id", "spotify_cover_url": "covers/missing.jpg"}}).json()
+    repaired = next(item for item in board(client)["nodes"] if item["id"] == created["id"])["track_data"]["spotify_cover_url"]
+    assert repaired.startswith("covers/")
+    assert repaired != "covers/missing.jpg"
+    assert (main.MEDIA_ROOT / repaired).exists()
 
 
 def test_upload_image(client):
