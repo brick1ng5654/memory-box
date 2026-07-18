@@ -50,6 +50,7 @@ class MemoryNode(Base):
     width: Mapped[float | None] = mapped_column(nullable=True)
     height: Mapped[float | None] = mapped_column(nullable=True)
     temporal_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    show_date: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     show_type_label: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     date_position: Mapped[str] = mapped_column(String(20), default="bottom-center", server_default="bottom-center")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

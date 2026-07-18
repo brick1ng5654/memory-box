@@ -51,6 +51,8 @@ def initialise():
             connection.execute(text("ALTER TABLE track_data ADD COLUMN collapsed_item_limit INTEGER NOT NULL DEFAULT 3"))
         if "z_index" not in node_columns:
             connection.execute(text("ALTER TABLE memory_nodes ADD COLUMN z_index INTEGER NOT NULL DEFAULT 0"))
+        if "show_date" not in node_columns:
+            connection.execute(text("ALTER TABLE memory_nodes ADD COLUMN show_date INTEGER NOT NULL DEFAULT 1"))
         if "show_type_label" not in node_columns:
             connection.execute(text("ALTER TABLE memory_nodes ADD COLUMN show_type_label INTEGER NOT NULL DEFAULT 0"))
         if "date_position" not in node_columns:
@@ -256,7 +258,7 @@ def delete_board(board_id: int, db: Session = Depends(get_db)):
 @app.post("/api/boards/{board_id}/nodes", response_model=NodeRead, status_code=status.HTTP_201_CREATED)
 def create_node(board_id: int, payload: NodeCreate, db: Session = Depends(get_db)):
     board_or_404(board_id, db)
-    node = MemoryNode(board_id=board_id, type=payload.type, title=payload.title, text_content=payload.text_content, position_x=payload.position_x, position_y=payload.position_y, z_index=payload.z_index, width=payload.width, height=payload.height, temporal_date=payload.temporal_date, show_type_label=payload.show_type_label, date_position=payload.date_position)
+    node = MemoryNode(board_id=board_id, type=payload.type, title=payload.title, text_content=payload.text_content, position_x=payload.position_x, position_y=payload.position_y, z_index=payload.z_index, width=payload.width, height=payload.height, temporal_date=payload.temporal_date, show_date=payload.show_date, show_type_label=payload.show_type_label, date_position=payload.date_position)
     if payload.type == NodeType.track:
         track = payload.track_data or {"title": payload.title}
         raw_track = track.model_dump() if hasattr(track, "model_dump") else track
@@ -268,7 +270,7 @@ def create_node(board_id: int, payload: NodeCreate, db: Session = Depends(get_db
 @app.patch("/api/nodes/{node_id}", response_model=NodeRead)
 def update_node(node_id: int, payload: NodeUpdate, db: Session = Depends(get_db)):
     node = node_or_404(node_id, db)
-    for field in ("title", "text_content", "position_x", "position_y", "z_index", "width", "height", "temporal_date", "show_type_label", "date_position"):
+    for field in ("title", "text_content", "position_x", "position_y", "z_index", "width", "height", "temporal_date", "show_date", "show_type_label", "date_position"):
         if field in payload.model_fields_set:
             setattr(node, field, getattr(payload, field))
     if payload.track_data is not None:
