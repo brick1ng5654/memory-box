@@ -53,6 +53,7 @@ class MemoryNode(Base):
     show_date: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     show_type_label: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     date_position: Mapped[str] = mapped_column(String(20), default="bottom-center", server_default="bottom-center")
+    title_position: Mapped[str] = mapped_column(String(20), default="bottom-center", server_default="bottom-center")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     board: Mapped[Board] = relationship(back_populates="nodes")
