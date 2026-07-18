@@ -155,6 +155,27 @@ def test_upload_image(client):
     assert uploaded.json()["preview_path"]
 
 
+def test_duplicate_media_copies_original_and_preview_files(client):
+    import app.main as main
+    from PIL import Image
+
+    current = board(client)
+    source = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "media", "title": "Source"}).json()
+    image = Image.new("RGB", (16, 10), "purple")
+    binary = BytesIO(); image.save(binary, format="PNG")
+    original = client.post(f"/api/nodes/{source['id']}/media", files={"file": ("source.png", binary.getvalue(), "image/png")}).json()
+    duplicate = client.post(f"/api/nodes/{source['id']}/duplicate-media", json={"position_x": 240, "position_y": 160, "z_index": 2})
+    assert duplicate.status_code == 201
+    copied = duplicate.json()["media_assets"][0]
+    assert copied["storage_path"] != original["storage_path"]
+    assert copied["preview_path"] != original["preview_path"]
+    assert (main.MEDIA_ROOT / copied["storage_path"]).read_bytes() == (main.MEDIA_ROOT / original["storage_path"]).read_bytes()
+    assert (main.MEDIA_ROOT / copied["preview_path"]).read_bytes() == (main.MEDIA_ROOT / original["preview_path"]).read_bytes()
+    assert client.delete(f"/api/nodes/{source['id']}").status_code == 204
+    assert (main.MEDIA_ROOT / copied["storage_path"]).exists()
+    assert (main.MEDIA_ROOT / copied["preview_path"]).exists()
+
+
 def test_multiple_media_uploads(client):
     current = board(client)
     node = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "media", "title": "Короткий момент", "width": 300, "height": 260}).json()

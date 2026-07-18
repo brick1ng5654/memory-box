@@ -289,7 +289,18 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
     setBoard(current => current ? { ...current, nodes: current.nodes.filter(node => !ids.has(node.id)), edges: current.edges.filter(edge => !ids.has(edge.source_node_id) && !ids.has(edge.target_node_id)) } : current)
     setSelected(null); setSelectedIds([])
   }
-  const duplicate = async (source: MemoryNode) => create(source.type, { x: source.position_x + 40, y: source.position_y + 40 }, source)
+  const duplicate = async (source: MemoryNode) => {
+    if (source.type !== 'media' || !board) return create(source.type, { x: source.position_x + 40, y: source.position_y + 40 }, source)
+    try {
+      const node = await api.duplicateMediaNode(source.id, { position_x: source.position_x + 40, position_y: source.position_y + 40, z_index: Math.max(0, ...nodes.map(item => item.data.z_index)) + 1 })
+      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia), selected: true }])
+      setBoard(current => current ? { ...current, nodes: [...current.nodes, node] } : current)
+      selectionRef.current = [node.id]
+      setSelected(node); setSelectedIds([node.id])
+      return node
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось дублировать медиа') }
+    return null
+  }
   const openContextMenu = (event: { preventDefault: () => void; stopPropagation: () => void; clientX: number; clientY: number }, nodeId?: number, edgeIds?: number[]) => {
     event.preventDefault(); event.stopPropagation()
     const activeNodeIds = contextSelectionRef.current.nodeIds.length ? contextSelectionRef.current.nodeIds : selectionRef.current
