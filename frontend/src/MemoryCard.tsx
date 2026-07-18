@@ -39,7 +39,7 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
 
   return <div className={`memory-card ${node.type} ${isPlaylist ? 'playlist-card' : ''} ${largeCover ? 'music-large' : ''} ${node.height ? 'sized' : ''} ${node.show_type_label ? 'has-type-label' : ''} ${selected ? 'selected' : ''}`}>
     {(node.type === 'media' || node.type === 'note' || node.type === 'track') && <NodeResizer isVisible={selected} minWidth={node.type === 'media' ? 220 : node.type === 'track' ? isPlaylist && largeCover ? 320 : 280 : 180} minHeight={node.type === 'media' ? 170 : node.type === 'track' ? isPlaylist && largeCover ? 320 : isPlaylist ? 205 : largeCover ? 280 : 140 : 110} maxWidth={850} maxHeight={760} lineClassName="resize-line" handleClassName="resize-handle music-resize-handle" />}
-    <Handle className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="target" position={Position.Left} style={{ top: '50%', transform: 'translateY(-50%)' }} />
+    <Handle id="left" className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="source" position={Position.Left} isConnectableStart isConnectableEnd style={{ top: '50%', transform: 'translateY(-50%)' }} />
     {node.show_type_label && <span className="node-type-label">{icons[node.type]} {labels[node.type]}</span>}
     {node.temporal_date && <time className={`node-date ${node.date_position || 'bottom-center'}`}>{formatNodeDate(node.temporal_date)}</time>}
     {node.type === 'media' && <MediaPreview assets={node.media_assets} onOpen={node.onOpenMedia} />}
@@ -53,7 +53,7 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
       <button className="playlist-toggle nodrag" onClick={event => { event.stopPropagation(); setPlaylistOpen(value => !value) }}>{playlistOpen ? 'Скрыть треки' : 'Показать треки'}</button>
     </div>}
     {isPlaylist && <PlaylistRows items={playlistOpen ? playlistItems : playlistPreview} preview={!playlistOpen} />}
-    <Handle className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="source" position={Position.Right} style={{ top: '50%', transform: 'translateY(-50%)' }} />
+    <Handle id="right" className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="source" position={Position.Right} isConnectableStart isConnectableEnd style={{ top: '50%', transform: 'translateY(-50%)' }} />
   </div>
 }
 

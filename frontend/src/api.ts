@@ -5,7 +5,7 @@ export type PlaylistItem = { title: string; artist: string; cover_url?: string |
 export type Track = { title: string; artist: string; kind: 'track' | 'playlist'; cover_size: 'small' | 'large'; playlist_items: PlaylistItem[]; collapsed_item_limit: number; spotify_id?: string | null; cover_url?: string | null; spotify_cover_url?: string | null }
 export type SpotifyTrack = { id: string; title: string; artist: string; cover_url?: string | null }
 export type MemoryNode = { id: number; board_id: number; type: NodeType; title: string; text_content?: string | null; position_x: number; position_y: number; z_index: number; width?: number | null; height?: number | null; temporal_date?: string | null; show_type_label: boolean; date_position: DatePosition; media_assets: Asset[]; track_data?: Track | null }
-export type MemoryEdge = { id: number; board_id: number; source_node_id: number; target_node_id: number; label?: string | null }
+export type MemoryEdge = { id: number; board_id: number; source_node_id: number; target_node_id: number; source_handle?: 'left' | 'right' | null; target_handle?: 'left' | 'right' | null; label?: string | null }
 export type Board = { id: number; title: string; year: number; month: number; start_date: string; end_date: string; nodes: MemoryNode[]; edges: MemoryEdge[] }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -26,7 +26,7 @@ export const api = {
   node: (id: number) => request<MemoryNode>(`/nodes/${id}`),
   updateNode: (id: number, data: Partial<MemoryNode>) => request<MemoryNode>(`/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteNode: (id: number) => request<void>(`/nodes/${id}`, { method: 'DELETE' }),
-  createEdge: (boardId: number, source_node_id: number, target_node_id: number) => request<MemoryEdge>(`/boards/${boardId}/edges`, { method: 'POST', body: JSON.stringify({ source_node_id, target_node_id }) }),
+  createEdge: (boardId: number, source_node_id: number, target_node_id: number, source_handle?: string | null, target_handle?: string | null) => request<MemoryEdge>(`/boards/${boardId}/edges`, { method: 'POST', body: JSON.stringify({ source_node_id, target_node_id, source_handle, target_handle }) }),
   deleteEdge: (id: number) => request<void>(`/edges/${id}`, { method: 'DELETE' }),
   deleteMedia: (id: number) => request<void>(`/media/${id}`, { method: 'DELETE' }),
   updateMedia: (id: number, data: Partial<Pick<Asset, 'sort_order' | 'is_favorite'>>) => request<Asset>(`/media/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
