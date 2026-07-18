@@ -98,5 +98,7 @@ class MemoryEdge(Base):
     board_id: Mapped[int] = mapped_column(ForeignKey("boards.id", ondelete="CASCADE"), index=True)
     source_node_id: Mapped[int] = mapped_column(ForeignKey("memory_nodes.id", ondelete="CASCADE"))
     target_node_id: Mapped[int] = mapped_column(ForeignKey("memory_nodes.id", ondelete="CASCADE"))
+    source_handle: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    target_handle: Mapped[str | None] = mapped_column(String(20), nullable=True)
     label: Mapped[str | None] = mapped_column(String(200), nullable=True)
     board: Mapped[Board] = relationship(back_populates="edges")

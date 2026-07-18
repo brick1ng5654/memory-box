@@ -55,6 +55,11 @@ def initialise():
             connection.execute(text("ALTER TABLE memory_nodes ADD COLUMN show_type_label INTEGER NOT NULL DEFAULT 0"))
         if "date_position" not in node_columns:
             connection.execute(text("ALTER TABLE memory_nodes ADD COLUMN date_position VARCHAR(20) NOT NULL DEFAULT 'bottom-center'"))
+        edge_columns = {column["name"] for column in inspect(engine).get_columns("memory_edges")}
+        if "source_handle" not in edge_columns:
+            connection.execute(text("ALTER TABLE memory_edges ADD COLUMN source_handle VARCHAR(20)"))
+        if "target_handle" not in edge_columns:
+            connection.execute(text("ALTER TABLE memory_edges ADD COLUMN target_handle VARCHAR(20)"))
     with Session(engine) as db:
         if not db.scalar(select(Board.id).limit(1)):
             db.add(Board(title="Июль 2026", year=2026, month=7, start_date=date(2026, 7, 1), end_date=date(2026, 7, 31)))

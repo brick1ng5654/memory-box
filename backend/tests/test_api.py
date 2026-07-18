@@ -61,8 +61,10 @@ def test_edges_and_safe_node_deletion(client):
     assert len(second["track_data"]["playlist_items"]) == 2
     assert second["track_data"]["collapsed_item_limit"] == 2
     assert second["track_data"]["playlist_items"][0]["is_favorite"] is True
-    edge = client.post(f"/api/boards/{current['id']}/edges", json={"source_node_id": first["id"], "target_node_id": second["id"]})
+    edge = client.post(f"/api/boards/{current['id']}/edges", json={"source_node_id": first["id"], "target_node_id": second["id"], "source_handle": "right", "target_handle": "right"})
     assert edge.status_code == 201
+    assert edge.json()["source_handle"] == "right"
+    assert edge.json()["target_handle"] == "right"
     assert client.delete(f"/api/nodes/{first['id']}").status_code == 204
     assert all(item["id"] != edge.json()["id"] for item in board(client)["edges"])
 

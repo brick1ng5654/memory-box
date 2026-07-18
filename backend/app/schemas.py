@@ -124,6 +124,8 @@ class BoardRead(BaseModel):
 class EdgeCreate(BaseModel):
     source_node_id: int
     target_node_id: int
+    source_handle: Literal["left", "right"] | None = None
+    target_handle: Literal["left", "right"] | None = None
     label: str | None = Field(default=None, max_length=200)
 
 
