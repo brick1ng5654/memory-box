@@ -23,6 +23,7 @@ export const api = {
   spotifySearch: (query: string) => request<SpotifyTrack[]>(`/spotify/search?query=${encodeURIComponent(query)}`),
   renameBoard: (id: number, title: string) => request<Board>(`/boards/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   createNode: (boardId: number, data: Partial<MemoryNode> & { type: NodeType }) => request<MemoryNode>(`/boards/${boardId}/nodes`, { method: 'POST', body: JSON.stringify(data) }),
+  duplicateMediaNode: (id: number, data: { position_x: number; position_y: number; z_index: number }) => request<MemoryNode>(`/nodes/${id}/duplicate-media`, { method: 'POST', body: JSON.stringify(data) }),
   node: (id: number) => request<MemoryNode>(`/nodes/${id}`),
   updateNode: (id: number, data: Partial<MemoryNode>) => request<MemoryNode>(`/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteNode: (id: number) => request<void>(`/nodes/${id}`, { method: 'DELETE' }),

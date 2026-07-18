@@ -62,6 +62,12 @@ class MediaAssetUpdate(BaseModel):
     is_favorite: bool | None = None
 
 
+class MediaNodeDuplicate(BaseModel):
+    position_x: float
+    position_y: float
+    z_index: int = 0
+
+
 class NodeCreate(BaseModel):
     type: NodeType
     title: str = Field(default="", max_length=200)

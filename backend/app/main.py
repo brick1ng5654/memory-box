@@ -4,6 +4,7 @@ import json
 import base64
 import time
 import calendar
+from shutil import copyfile
 from datetime import date
 from pathlib import Path
 from urllib.parse import urlencode
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from .database import Base, engine, get_db
 from .models import Board, MediaAsset, MemoryEdge, MemoryNode, NodeType, TrackData
-from .schemas import BoardCreate, BoardDetail, BoardRead, BoardUpdate, EdgeCreate, EdgeRead, MediaAssetRead, MediaAssetUpdate, NodeCreate, NodeRead, NodeUpdate, SpotifyTrackSearchResult
+from .schemas import BoardCreate, BoardDetail, BoardRead, BoardUpdate, EdgeCreate, EdgeRead, MediaAssetRead, MediaAssetUpdate, MediaNodeDuplicate, NodeCreate, NodeRead, NodeUpdate, SpotifyTrackSearchResult
 
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", "./uploads"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", 100 * 1024 * 1024))
@@ -308,6 +309,35 @@ def create_node(board_id: int, payload: NodeCreate, db: Session = Depends(get_db
         node.track_data = TrackData(**localise_track_covers(raw_track))
     db.add(node); db.commit()
     return node_or_404(node.id, db)
+
+
+def copy_media_file(relative_path: str) -> str:
+    source = MEDIA_ROOT / relative_path
+    if not source.is_file():
+        raise HTTPException(409, "Не удалось найти исходный медиафайл для дублирования")
+    path = Path(relative_path)
+    copied_relative = str(path.with_name(f"{uuid.uuid4().hex}{path.suffix}")).replace("\\", "/")
+    destination = MEDIA_ROOT / copied_relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    copyfile(source, destination)
+    return copied_relative
+
+
+@app.post("/api/nodes/{node_id}/duplicate-media", response_model=NodeRead, status_code=status.HTTP_201_CREATED)
+def duplicate_media_node(node_id: int, payload: MediaNodeDuplicate, db: Session = Depends(get_db)):
+    source = node_or_404(node_id, db)
+    if source.type != NodeType.media:
+        raise HTTPException(400, "Дублировать с файлами можно только медиа-узел")
+    copied_assets = []
+    for asset in source.media_assets:
+        copied_assets.append((asset, copy_media_file(asset.storage_path), copy_media_file(asset.preview_path) if asset.preview_path else None))
+    duplicate = MemoryNode(board_id=source.board_id, type=NodeType.media, title=source.title, text_content=source.text_content, position_x=payload.position_x, position_y=payload.position_y, z_index=payload.z_index, width=source.width, height=source.height, temporal_date=source.temporal_date, show_date=source.show_date, show_type_label=source.show_type_label, date_position=source.date_position, title_position=source.title_position)
+    db.add(duplicate)
+    db.flush()
+    for asset, storage_path, preview_path in copied_assets:
+        db.add(MediaAsset(node_id=duplicate.id, original_filename=asset.original_filename, storage_path=storage_path, mime_type=asset.mime_type, size_bytes=asset.size_bytes, preview_path=preview_path, width=asset.width, height=asset.height, duration=asset.duration, sort_order=asset.sort_order, is_favorite=asset.is_favorite))
+    db.commit()
+    return node_or_404(duplicate.id, db)
 
 
 @app.patch("/api/nodes/{node_id}", response_model=NodeRead)
