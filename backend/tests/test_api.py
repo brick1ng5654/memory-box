@@ -59,9 +59,12 @@ def test_delete_board(client):
 def test_edges_and_safe_node_deletion(client):
     current = board(client)
     first = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "note"}).json()
-    second = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "track", "track_data": {"kind": "playlist", "title": "July", "collapsed_item_limit": 2, "playlist_items": [{"title": "Song", "artist": "Artist", "is_favorite": True}, {"title": "Another", "artist": "Artist", "is_favorite": False}]}}).json()
+    second = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "track", "track_data": {"kind": "playlist", "title": "July", "collapsed_item_limit": 2, "show_timeline": True, "duration_seconds": 154, "hide_details": True, "playlist_items": [{"title": "Song", "artist": "Artist", "is_favorite": True}, {"title": "Another", "artist": "Artist", "is_favorite": False}]}}).json()
     assert len(second["track_data"]["playlist_items"]) == 2
     assert second["track_data"]["collapsed_item_limit"] == 2
+    assert second["track_data"]["show_timeline"] is True
+    assert second["track_data"]["duration_seconds"] == 154
+    assert second["track_data"]["hide_details"] is True
     assert second["track_data"]["playlist_items"][0]["is_favorite"] is True
     edge = client.post(f"/api/boards/{current['id']}/edges", json={"source_node_id": first["id"], "target_node_id": second["id"], "source_handle": "right", "target_handle": "right"})
     assert edge.status_code == 201
@@ -77,6 +80,22 @@ def test_spotify_search_explains_missing_configuration(client, monkeypatch):
     response = client.get("/api/spotify/search", params={"query": "Radiohead"})
     assert response.status_code == 503
     assert "SPOTIFY_CLIENT_ID" in response.json()["detail"]
+
+
+def test_spotify_search_returns_track_duration(client, monkeypatch):
+    import app.main as main
+
+    class SpotifyResponse:
+        def read(self):
+            return b'{"tracks":{"items":[{"id":"spotify-id","name":"Song","artists":[{"name":"Artist"}],"duration_ms":153534,"album":{"images":[{"url":"https://cdn.spotify.test/cover.png"}]}}]}}'
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+
+    monkeypatch.setattr(main, "spotify_access_token", lambda: "token")
+    monkeypatch.setattr(main, "urlopen", lambda *_args, **_kwargs: SpotifyResponse())
+    response = client.get("/api/spotify/search", params={"query": "Song"})
+    assert response.status_code == 200
+    assert response.json()[0]["duration_seconds"] == 154
 
 
 def test_track_covers_are_saved_in_local_media_volume(client, monkeypatch):

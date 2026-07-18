@@ -49,6 +49,12 @@ def initialise():
             connection.execute(text("ALTER TABLE boards ADD COLUMN end_date DATE"))
         if "collapsed_item_limit" not in track_columns:
             connection.execute(text("ALTER TABLE track_data ADD COLUMN collapsed_item_limit INTEGER NOT NULL DEFAULT 3"))
+        if "show_timeline" not in track_columns:
+            connection.execute(text("ALTER TABLE track_data ADD COLUMN show_timeline INTEGER NOT NULL DEFAULT 0"))
+        if "duration_seconds" not in track_columns:
+            connection.execute(text("ALTER TABLE track_data ADD COLUMN duration_seconds INTEGER NOT NULL DEFAULT 0"))
+        if "hide_details" not in track_columns:
+            connection.execute(text("ALTER TABLE track_data ADD COLUMN hide_details INTEGER NOT NULL DEFAULT 0"))
         if "z_index" not in node_columns:
             connection.execute(text("ALTER TABLE memory_nodes ADD COLUMN z_index INTEGER NOT NULL DEFAULT 0"))
         if "show_date" not in node_columns:
@@ -181,7 +187,7 @@ def search_spotify_tracks(query: str = Query(min_length=2, max_length=200)):
         raise HTTPException(502, "Spotify временно недоступен. Попробуйте ещё раз")
     except (URLError, ValueError):
         raise HTTPException(502, "Не удалось выполнить поиск в Spotify")
-    return [SpotifyTrackSearchResult(id=item["id"], title=item["name"], artist=", ".join(artist["name"] for artist in item.get("artists", [])), cover_url=(item.get("album", {}).get("images") or [{}])[0].get("url")) for item in items]
+    return [SpotifyTrackSearchResult(id=item["id"], title=item["name"], artist=", ".join(artist["name"] for artist in item.get("artists", [])), cover_url=(item.get("album", {}).get("images") or [{}])[0].get("url"), duration_seconds=round(item.get("duration_ms", 0) / 1000)) for item in items]
 
 
 @app.get("/api/health")
