@@ -22,6 +22,9 @@ class TrackDataPayload(BaseModel):
     cover_size: CoverSize = CoverSize.small
     playlist_items: list[PlaylistItem] = []
     collapsed_item_limit: int = Field(default=3, ge=0, le=10)
+    show_timeline: bool = False
+    duration_seconds: int = Field(default=0, ge=0, le=86400)
+    hide_details: bool = False
     spotify_id: str | None = None
     cover_url: str | None = None
     spotify_cover_url: str | None = None
@@ -36,6 +39,7 @@ class SpotifyTrackSearchResult(BaseModel):
     title: str
     artist: str
     cover_url: str | None = None
+    duration_seconds: int = 0
 
 
 class MediaAssetRead(BaseModel):
