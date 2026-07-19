@@ -6,6 +6,11 @@ const labels = { note: 'Заметка', media: 'Медиа', track: 'Музык
 const icons = { note: '✦', media: '◒', track: '♫' }
 const formatNodeDate = (value: string) => new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' }).format(new Date(`${value}T00:00:00`))
 const formatTrackDuration = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+const resizeLimits = (type: MemoryNode['type'], isPlaylist: boolean, largeCover: boolean) => {
+  if (type === 'media') return { minWidth: 120, minHeight: 100 }
+  if (type === 'note') return { minWidth: 120, minHeight: 80 }
+  return { minWidth: isPlaylist && largeCover ? 180 : 150, minHeight: isPlaylist && largeCover ? 180 : largeCover ? 170 : 110 }
+}
 export type FlowData = MemoryNode & { onOpenMedia?: (assets: Asset[], index: number) => void; isConnecting?: boolean } & Record<string, unknown>
 export type FlowMemoryNode = Node<FlowData, 'memory'>
 
@@ -41,10 +46,11 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
   const dateSpaceClass = node.show_date && node.temporal_date ? datePosition.startsWith('top') ? 'has-top-date' : 'has-bottom-date' : ''
   const titlePosition = node.title_position || 'bottom-center'
   const mediaTitleClass = node.type === 'media' && node.title ? `has-media-title title-${titlePosition}` : ''
+  const resizeLimit = resizeLimits(node.type, isPlaylist, largeCover)
   useEffect(() => { updateNodeInternals(id) }, [id, playlistOpen, node.isConnecting, selected, updateNodeInternals])
 
   return <div className={`memory-card ${node.type} ${isPlaylist ? 'playlist-card' : ''} ${largeCover ? 'music-large' : ''} ${hideTrackDetails ? 'cover-only' : ''} ${node.height ? 'sized' : ''} ${node.show_type_label ? 'has-type-label' : ''} ${dateSpaceClass} ${mediaTitleClass} ${selected ? 'selected' : ''}`}>
-    {(node.type === 'media' || node.type === 'note' || node.type === 'track') && <NodeResizer isVisible={selected} minWidth={node.type === 'media' ? 220 : node.type === 'track' ? isPlaylist && largeCover ? 320 : 280 : 180} minHeight={node.type === 'media' ? 170 : node.type === 'track' ? isPlaylist && largeCover ? 320 : isPlaylist ? 205 : largeCover ? 280 : 140 : 110} maxWidth={850} maxHeight={760} lineClassName="resize-line" handleClassName="resize-handle music-resize-handle" />}
+    <NodeResizer isVisible={selected} {...resizeLimit} maxWidth={2400} maxHeight={1800} lineClassName="resize-line" handleClassName="resize-handle music-resize-handle" />
     <Handle id="left" className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="source" position={Position.Left} isConnectableStart isConnectableEnd style={{ top: '50%', transform: 'translateY(-50%)' }} />
     <Handle id="top" className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="source" position={Position.Top} isConnectableStart isConnectableEnd style={{ left: '50%', transform: 'translateX(-50%)' }} />
     {node.show_type_label && <span className="node-type-label">{icons[node.type]} {labels[node.type]}</span>}
