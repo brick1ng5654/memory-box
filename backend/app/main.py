@@ -66,6 +66,8 @@ def initialise():
             connection.execute(text("ALTER TABLE memory_nodes ADD COLUMN date_position VARCHAR(20) NOT NULL DEFAULT 'bottom-center'"))
         if "title_position" not in node_columns:
             connection.execute(text("ALTER TABLE memory_nodes ADD COLUMN title_position VARCHAR(20) NOT NULL DEFAULT 'bottom-center'"))
+        if "object_data" not in node_columns:
+            connection.execute(text("ALTER TABLE memory_nodes ADD COLUMN object_data JSON"))
         edge_columns = {column["name"] for column in inspect(engine).get_columns("memory_edges")}
         if "source_handle" not in edge_columns:
             connection.execute(text("ALTER TABLE memory_edges ADD COLUMN source_handle VARCHAR(20)"))
@@ -302,7 +304,7 @@ def delete_board(board_id: int, db: Session = Depends(get_db)):
 @app.post("/api/boards/{board_id}/nodes", response_model=NodeRead, status_code=status.HTTP_201_CREATED)
 def create_node(board_id: int, payload: NodeCreate, db: Session = Depends(get_db)):
     board_or_404(board_id, db)
-    node = MemoryNode(board_id=board_id, type=payload.type, title=payload.title, text_content=payload.text_content, position_x=payload.position_x, position_y=payload.position_y, z_index=payload.z_index, width=payload.width, height=payload.height, temporal_date=payload.temporal_date, show_date=payload.show_date, show_type_label=payload.show_type_label, date_position=payload.date_position, title_position=payload.title_position)
+    node = MemoryNode(board_id=board_id, type=payload.type, title=payload.title, text_content=payload.text_content, position_x=payload.position_x, position_y=payload.position_y, z_index=payload.z_index, width=payload.width, height=payload.height, temporal_date=payload.temporal_date, show_date=payload.show_date, show_type_label=payload.show_type_label, date_position=payload.date_position, title_position=payload.title_position, object_data=payload.object_data)
     if payload.type == NodeType.track:
         track = payload.track_data or {"title": payload.title}
         raw_track = track.model_dump() if hasattr(track, "model_dump") else track
@@ -326,12 +328,12 @@ def copy_media_file(relative_path: str) -> str:
 @app.post("/api/nodes/{node_id}/duplicate-media", response_model=NodeRead, status_code=status.HTTP_201_CREATED)
 def duplicate_media_node(node_id: int, payload: MediaNodeDuplicate, db: Session = Depends(get_db)):
     source = node_or_404(node_id, db)
-    if source.type != NodeType.media:
-        raise HTTPException(400, "Дублировать с файлами можно только медиа-узел")
+    if source.type not in (NodeType.media, NodeType.canvas_image):
+        raise HTTPException(400, "Дублировать с файлами можно только медиакарточку или изображение")
     copied_assets = []
     for asset in source.media_assets:
         copied_assets.append((asset, copy_media_file(asset.storage_path), copy_media_file(asset.preview_path) if asset.preview_path else None))
-    duplicate = MemoryNode(board_id=source.board_id, type=NodeType.media, title=source.title, text_content=source.text_content, position_x=payload.position_x, position_y=payload.position_y, z_index=payload.z_index, width=source.width, height=source.height, temporal_date=source.temporal_date, show_date=source.show_date, show_type_label=source.show_type_label, date_position=source.date_position, title_position=source.title_position)
+    duplicate = MemoryNode(board_id=source.board_id, type=source.type, title=source.title, text_content=source.text_content, position_x=payload.position_x, position_y=payload.position_y, z_index=payload.z_index, width=source.width, height=source.height, temporal_date=source.temporal_date, show_date=source.show_date, show_type_label=source.show_type_label, date_position=source.date_position, title_position=source.title_position, object_data=dict(source.object_data) if source.object_data else None)
     db.add(duplicate)
     db.flush()
     for asset, storage_path, preview_path in copied_assets:
@@ -343,7 +345,7 @@ def duplicate_media_node(node_id: int, payload: MediaNodeDuplicate, db: Session 
 @app.patch("/api/nodes/{node_id}", response_model=NodeRead)
 def update_node(node_id: int, payload: NodeUpdate, db: Session = Depends(get_db)):
     node = node_or_404(node_id, db)
-    for field in ("title", "text_content", "position_x", "position_y", "z_index", "width", "height", "temporal_date", "show_date", "show_type_label", "date_position", "title_position"):
+    for field in ("title", "text_content", "position_x", "position_y", "z_index", "width", "height", "temporal_date", "show_date", "show_type_label", "date_position", "title_position", "object_data"):
         if field in payload.model_fields_set:
             setattr(node, field, getattr(payload, field))
     if payload.track_data is not None:
@@ -389,11 +391,13 @@ def delete_node(node_id: int, db: Session = Depends(get_db)):
 @app.post("/api/nodes/{node_id}/media", response_model=MediaAssetRead, status_code=status.HTTP_201_CREATED)
 def upload_media(node_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
     node = node_or_404(node_id, db)
-    if node.type != NodeType.media:
+    if node.type not in (NodeType.media, NodeType.canvas_image):
         raise HTTPException(400, "Медиа можно прикреплять только к медиа-узлу")
     extension = Path(file.filename or "upload").suffix.lower()
     content_type = (file.content_type or "").lower()
     detected_type = content_type if content_type in ALLOWED_MEDIA else MEDIA_TYPES_BY_EXTENSION.get(extension)
+    if node.type == NodeType.canvas_image and detected_type != "image/png":
+        raise HTTPException(415, "For a canvas image, only PNG is supported")
     if detected_type not in ALLOWED_MEDIA:
         raise HTTPException(415, "Поддерживаются JPEG, PNG, WebP, GIF, MP4, WebM и MOV")
     asset_id = uuid.uuid4().hex
