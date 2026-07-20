@@ -11,6 +11,8 @@ class NodeType(str, enum.Enum):
     note = "note"
     media = "media"
     track = "track"
+    canvas_text = "canvas_text"
+    canvas_image = "canvas_image"
 
 
 class MusicKind(str, enum.Enum):
@@ -54,6 +56,7 @@ class MemoryNode(Base):
     show_type_label: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     date_position: Mapped[str] = mapped_column(String(20), default="bottom-center", server_default="bottom-center")
     title_position: Mapped[str] = mapped_column(String(20), default="bottom-center", server_default="bottom-center")
+    object_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     board: Mapped[Board] = relationship(back_populates="nodes")

@@ -1,10 +1,11 @@
-export type NodeType = 'note' | 'media' | 'track'
+export type NodeType = 'note' | 'media' | 'track' | 'canvas_text' | 'canvas_image'
 export type DatePosition = 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right'
 export type Asset = { id: number; original_filename: string; storage_path: string; preview_path?: string | null; mime_type: string; size_bytes: number; width?: number | null; height?: number | null; duration?: number | null; sort_order: number; is_favorite: boolean }
 export type PlaylistItem = { title: string; artist: string; cover_url?: string | null; is_favorite: boolean }
 export type Track = { title: string; artist: string; kind: 'track' | 'playlist'; cover_size: 'small' | 'large'; playlist_items: PlaylistItem[]; collapsed_item_limit: number; show_timeline: boolean; duration_seconds: number; hide_details: boolean; spotify_id?: string | null; cover_url?: string | null; spotify_cover_url?: string | null }
 export type SpotifyTrack = { id: string; title: string; artist: string; cover_url?: string | null; duration_seconds: number }
-export type MemoryNode = { id: number; board_id: number; type: NodeType; title: string; text_content?: string | null; position_x: number; position_y: number; z_index: number; width?: number | null; height?: number | null; temporal_date?: string | null; show_date: boolean; show_type_label: boolean; date_position: DatePosition; title_position: DatePosition; media_assets: Asset[]; track_data?: Track | null }
+export type CanvasObjectData = { text?: string; font_size?: number; font_family?: string; font_weight?: boolean; font_style?: boolean; text_align?: 'left' | 'center' | 'right' | 'justify'; color?: string }
+export type MemoryNode = { id: number; board_id: number; type: NodeType; title: string; text_content?: string | null; position_x: number; position_y: number; z_index: number; width?: number | null; height?: number | null; temporal_date?: string | null; show_date: boolean; show_type_label: boolean; date_position: DatePosition; title_position: DatePosition; object_data?: CanvasObjectData | null; media_assets: Asset[]; track_data?: Track | null }
 export type MemoryEdge = { id: number; board_id: number; source_node_id: number; target_node_id: number; source_handle?: 'left' | 'right' | 'top' | 'bottom' | null; target_handle?: 'left' | 'right' | 'top' | 'bottom' | null; label?: string | null }
 export type Board = { id: number; title: string; year: number; month: number; start_date: string; end_date: string; nodes: MemoryNode[]; edges: MemoryEdge[] }
 

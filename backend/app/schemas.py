@@ -82,6 +82,7 @@ class NodeCreate(BaseModel):
     show_type_label: bool = False
     date_position: DatePosition = "bottom-center"
     title_position: DatePosition = "bottom-center"
+    object_data: dict | None = None
     track_data: TrackDataPayload | None = None
 
 
@@ -98,6 +99,7 @@ class NodeUpdate(BaseModel):
     show_type_label: bool = False
     date_position: DatePosition = "bottom-center"
     title_position: DatePosition = "bottom-center"
+    object_data: dict | None = None
     track_data: TrackDataPayload | None = None
 
 

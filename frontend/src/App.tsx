@@ -17,10 +17,10 @@ const clipboardMediaExtensions: Record<string, string> = {
   'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
   'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/x-m4v': 'm4v',
 }
-const toFlowNode = (node: MemoryNode, onOpenMedia: (assets: Asset[], index: number) => void): FlowMemoryNode => ({
+const toFlowNode = (node: MemoryNode, onOpenMedia: (assets: Asset[], index: number) => void, onObjectChange?: (patch: Partial<MemoryNode>) => void): FlowMemoryNode => ({
   id: String(node.id), type: 'memory', position: { x: node.position_x, y: node.position_y },
   style: { width: node.width ?? defaultNodeWidth(node), height: node.height ?? defaultNodeHeight(node), zIndex: node.z_index },
-  data: { ...node, onOpenMedia },
+  data: { ...node, onOpenMedia, onObjectChange },
 })
 const toFlowEdge = (edge: MemoryEdge): Edge => ({
   id: String(edge.id), type: 'memory', source: String(edge.source_node_id), sourceHandle: edge.source_handle || 'right', target: String(edge.target_node_id), targetHandle: edge.target_handle || 'left', label: edge.label || undefined,
@@ -60,13 +60,17 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   const connectionCandidateRef = useRef<string | null>(null)
   const canvasRef = useRef<HTMLElement>(null)
   const canvasPointerRef = useRef<{ x: number; y: number } | null>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const pendingImagePositionRef = useRef<{ x: number; y: number } | null>(null)
+  const objectChangeRef = useRef<(id: string, patch: Partial<MemoryNode>) => void>(() => {})
+  const objectChange = useCallback((id: number, patch: Partial<MemoryNode>) => objectChangeRef.current(String(id), patch), [])
 
   const openMedia = useCallback((assets: Asset[], index: number) => setLightbox({ assets, index }), [])
   const load = useCallback(async () => {
     try {
       const next = await api.board(boardId)
       setBoard(next)
-      setNodes(next.nodes.map(node => toFlowNode(node, openMedia)))
+      setNodes(next.nodes.map(node => toFlowNode(node, openMedia, patch => objectChange(node.id, patch))))
       setEdges(next.edges.map(toFlowEdge))
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Не удалось загрузить холст')
@@ -108,11 +112,11 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
     setNodes(list => list.map(node => node.id === String(updated.id) ? {
       ...node,
       style: { ...node.style, width: updated.width ?? defaultNodeWidth(updated), height: updated.height ?? defaultNodeHeight(updated), zIndex: updated.z_index },
-      data: { ...updated, onOpenMedia: openMedia },
+      data: { ...node.data, ...updated, onOpenMedia: openMedia, onObjectChange: patch => objectChange(updated.id, patch) },
     } : node))
     setBoard(current => current ? { ...current, nodes: current.nodes.map(node => node.id === updated.id ? updated : node) } : current)
     setSelected(current => current?.id === updated.id ? updated : current)
-  }, [openMedia, setNodes])
+  }, [objectChange, openMedia, setNodes])
   const setLayer = async (ids: number[], direction: 'front' | 'back') => {
     if (!board || !ids.length) return
     const selectedSet = new Set(ids)
@@ -130,11 +134,19 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
       setNodes(current => current.map(node => node.id === id ? {
         ...node, position: { x: saved.position_x, y: saved.position_y },
         style: { ...node.style, width: saved.width ?? node.style?.width, height: saved.height ?? node.style?.height, zIndex: saved.z_index },
-        data: { ...node.data, position_x: saved.position_x, position_y: saved.position_y, z_index: saved.z_index, width: saved.width, height: saved.height },
+        data: { ...node.data, ...saved, onOpenMedia: openMedia, onObjectChange: patch => objectChange(saved.id, patch) },
       } : node))
-      setBoard(current => current ? { ...current, nodes: current.nodes.map(node => node.id === saved.id ? { ...node, position_x: saved.position_x, position_y: saved.position_y, z_index: saved.z_index, width: saved.width, height: saved.height } : node) } : current)
+      setBoard(current => current ? { ...current, nodes: current.nodes.map(node => node.id === saved.id ? saved : node) } : current)
+      setSelected(current => current?.id === saved.id ? saved : current)
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось сохранить изменения') }
-  }, [setNodes])
+  }, [objectChange, openMedia, setNodes])
+  objectChangeRef.current = (id, patch) => {
+    const numericId = Number(id)
+    setNodes(current => current.map(node => node.id === id ? { ...node, data: { ...node.data, ...patch } } : node))
+    setBoard(current => current ? { ...current, nodes: current.nodes.map(node => node.id === numericId ? { ...node, ...patch } : node) } : current)
+    setSelected(current => current?.id === numericId ? { ...current, ...patch } : current)
+    void syncNode(id, patch)
+  }
   const onNodesChange = useCallback((changes: NodeChange<FlowMemoryNode>[]) => {
     setNodes(current => applyNodeChanges(changes, current))
     for (const change of changes) {
@@ -198,18 +210,25 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
       const node = await api.createNode(board.id, {
         type, title: source?.title || '', text_content: source?.text_content,
         position_x: position?.x ?? 100 + index * 40, position_y: position?.y ?? 120 + index * 30, z_index: Math.max(0, ...nodes.map(item => item.data.z_index)) + 1,
-        width: source?.width ?? (media ? 300 : type === 'note' ? 230 : undefined), height: source?.height ?? (media ? 260 : undefined),
+        width: source?.width ?? (media ? 300 : type === 'note' ? 230 : type === 'canvas_text' ? 380 : type === 'canvas_image' ? 260 : undefined), height: source?.height ?? (media ? 260 : type === 'canvas_text' ? 100 : type === 'canvas_image' ? 260 : undefined),
         temporal_date: source?.temporal_date,
         show_date: source?.show_date ?? true, show_type_label: source?.show_type_label ?? false, date_position: source?.date_position ?? 'bottom-center', title_position: source?.title_position ?? 'bottom-center',
         track_data: type === 'track' ? source?.track_data || { title: '', artist: '', kind: 'track', cover_size: 'small', playlist_items: [], collapsed_item_limit: 3, show_timeline: false, duration_seconds: 0, hide_details: false } : undefined,
+        object_data: source?.object_data ?? (type === 'canvas_text' ? { text: 'Текст', font_size: 42, font_family: "Inter, 'Segoe UI', Arial, sans-serif", color: '#f7f2ff' } : undefined),
       })
-      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia), selected: true }])
+      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch)), selected: true }])
       setBoard(current => current ? { ...current, nodes: [...current.nodes, node] } : current)
       selectionRef.current = [node.id]
       setSelected(node); setSelectedIds([node.id])
       return node
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось создать узел') }
     return null
+  }
+  const createPng = async (file: File, position: { x: number; y: number }) => {
+    try {
+      const node = await create('canvas_image', position)
+      if (node) { await api.upload(node.id, file); replaceNode(await api.node(node.id)) }
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось добавить PNG') }
   }
   const clipboardPosition = () => {
     const pointer = canvasPointerRef.current
@@ -266,7 +285,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   }, [board, nodes, screenToFlowPosition])
   const save = async (draft: Partial<MemoryNode>, files: File[] = []) => {
     if (!selected) return
-    const updated = await api.updateNode(selected.id, { title: draft.title, text_content: draft.text_content, temporal_date: draft.temporal_date, show_date: draft.show_date, show_type_label: draft.show_type_label, date_position: draft.date_position, track_data: draft.track_data })
+    const updated = await api.updateNode(selected.id, { title: draft.title, text_content: draft.text_content, temporal_date: draft.temporal_date, show_date: draft.show_date, show_type_label: draft.show_type_label, date_position: draft.date_position, track_data: draft.track_data, object_data: draft.object_data })
     replaceNode(updated)
     const errors: string[] = []
     for (const file of files) {
@@ -293,7 +312,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
     if (source.type !== 'media' || !board) return create(source.type, { x: source.position_x + 40, y: source.position_y + 40 }, source)
     try {
       const node = await api.duplicateMediaNode(source.id, { position_x: source.position_x + 40, position_y: source.position_y + 40, z_index: Math.max(0, ...nodes.map(item => item.data.z_index)) + 1 })
-      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia), selected: true }])
+      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch)), selected: true }])
       setBoard(current => current ? { ...current, nodes: [...current.nodes, node] } : current)
       selectionRef.current = [node.id]
       setSelected(node); setSelectedIds([node.id])
@@ -351,14 +370,20 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   return <main className="app" onClick={() => setContextMenu(null)}>
     <header><div><input aria-label="Название доски" value={board.title} onChange={event => setBoard({ ...board, title: event.target.value })} onBlur={async () => { try { await api.renameBoard(board.id, board.title) } catch { setNotice('Не удалось сохранить название') } }} /></div><button className="boards-link" onClick={onHome}>Все доски</button></header>
     {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
+    <input ref={imageInputRef} className="visually-hidden" type="file" accept="image/png,.png" onChange={event => { const file = event.target.files?.[0]; const position = pendingImagePositionRef.current; event.currentTarget.value = ''; if (file && position) void createPng(file, position) }} />
     <section ref={canvasRef} className="canvas-wrap" onPointerMoveCapture={event => { canvasPointerRef.current = { x: event.clientX, y: event.clientY } }} onMouseDownCapture={event => { if (event.button === 2) contextSelectionRef.current = { nodeIds: nodes.filter(node => node.selected).map(node => Number(node.id)), edgeIds: edges.filter(edge => edge.selected).map(edge => Number(edge.id)) } }} onContextMenuCapture={event => { const target = event.target as HTMLElement; const nodeElement = target.closest<HTMLElement>('.react-flow__node'); const edgeElement = target.closest<HTMLElement>('.react-flow__edge'); const nodeId = Number(nodeElement?.dataset.id); const edgeId = Number(edgeElement?.dataset.id); openContextMenu(event, Number.isFinite(nodeId) ? nodeId : undefined, Number.isFinite(edgeId) ? [edgeId] : undefined) }}>
       <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onSelectionChange={onSelectionChange} onNodeClick={(_, node) => { setSelected(node.data); setSelectedIds([Number(node.id)]); setSelectedEdgeIds([]) }} onEdgeClick={(_, edge) => { setSelectedEdgeIds([Number(edge.id)]); setSelected(null); setSelectedIds([]) }} onNodeContextMenu={(event, node) => openContextMenu(event, Number(node.id))} onEdgeContextMenu={(event, edge) => { const id = Number(edge.id); openContextMenu(event, undefined, selectedEdgeIds.length > 1 && selectedEdgeIds.includes(id) ? selectedEdgeIds : [id]) }} onPaneContextMenu={event => openContextMenu(event)} onPaneClick={() => { setSelected(null); setSelectedIds([]); setSelectedEdgeIds([]) }} onNodeDragStop={(_, node) => void syncNode(node.id, { position_x: node.position.x, position_y: node.position.y })} onConnectStart={(_, params) => { connectionSourceRef.current = params.nodeId; setConnectionCandidate(null) }} onConnectEnd={() => { connectionSourceRef.current = null; setConnectionCandidate(null) }} onMouseMove={onConnectionPointerMove} onConnect={onConnect} onMove={(_, viewport) => { if (Math.abs(viewport.zoom - zoomRef.current) >= 0.02) { zoomRef.current = viewport.zoom; setZoom(viewport.zoom) } }} nodeTypes={nodeTypes} edgeTypes={edgeTypes} deleteKeyCode={null} connectionMode={ConnectionMode.Loose} connectionRadius={32} proOptions={{ hideAttribution: true }} onlyRenderVisibleElements fitView minZoom={0.2} maxZoom={2} defaultEdgeOptions={{ type: 'memory' }}>
         <Background variant={BackgroundVariant.Dots} color="#484252" gap={20} size={dotSize} />
       </ReactFlow>
       <div className="timeline"><span>{formatPeriod(board)}</span><div className="timeline-scroll" onWheel={event => { if (event.deltaY) { event.currentTarget.scrollLeft += event.deltaY; event.preventDefault() } }}><div className="timeline-days">{days.map(date => { const datedNodes = board.nodes.filter(node => node.temporal_date === date); const bookmarks = datedNodes.length < 2 ? [] : datedNodes.filter((_, index) => index % 2 === 0).slice(0, 5); const day = Number(date.slice(8)); return <i key={date}><b className="timeline-bookmarks">{bookmarks.map((node, index) => <em key={node.id} className={`timeline-bookmark ${node.type}`} style={{ bottom: index * 9 }} title={node.title || node.track_data?.title || 'Воспоминание'} />)}</b><small>{day}</small></i> })}</div></div></div>
     </section>
-    <Editor node={selected} boardStartDate={board.start_date} boardEndDate={board.end_date} onClose={closeEditor} onSave={save} onRequestDelete={() => setDeleteDialog(true)} onDeleteAsset={removeAsset} onUpdateAsset={updateAsset} onReorderAssets={reorderAssets} onPreview={preview} onCreate={create} />
-    {contextMenu && <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}>{contextMenu.edgeIds?.length ? <><p>{contextMenu.edgeIds.length > 1 ? 'Связи' : 'Связь'}</p><button className="context-danger" onClick={() => { void onEdgesDelete(edges.filter(edge => contextMenu.edgeIds?.includes(Number(edge.id)))); setContextMenu(null) }}>Удалить {contextMenu.edgeIds.length > 1 ? 'связи' : 'связь'}</button></> : contextMenu.nodeIds && contextMenu.nodeIds.length > 1 ? <><p>Выбрано: {contextMenu.nodeIds.length}</p><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'front'); setContextMenu(null) }}>На передний план</button><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'back'); setContextMenu(null) }}>На задний план</button><button className="context-danger" onClick={() => { setDeleteDialog(true); setContextMenu(null) }}>Удалить выбранные</button></> : contextMenu.nodeId ? <><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) setClipboard(node); setContextMenu(null) }}>Копировать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) { setClipboard(node); setSelectedIds([node.id]); void remove() } setContextMenu(null) }}>Вырезать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) void duplicate(node); setContextMenu(null) }}>Дублировать</button><button onClick={() => { void setLayer([contextMenu.nodeId!], 'front'); setContextMenu(null) }}>На передний план</button><button onClick={() => { void setLayer([contextMenu.nodeId!], 'back'); setContextMenu(null) }}>На задний план</button></> : <>{clipboard && <button onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(clipboard.type, point, clipboard); setContextMenu(null) }}>Вставить</button>}<p>Создать</p>{(['note', 'media', 'track'] as NodeType[]).map(type => <button key={type} onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(type, point); setContextMenu(null) }}>{type === 'note' ? 'Заметку' : type === 'media' ? 'Медиа' : 'Музыку'}</button>)}</>}</div>}
+    {selected && ['note', 'media', 'track', 'canvas_text'].includes(selected.type) && <Editor node={selected} boardStartDate={board.start_date} boardEndDate={board.end_date} onClose={closeEditor} onSave={save} onRequestDelete={() => setDeleteDialog(true)} onDeleteAsset={removeAsset} onUpdateAsset={updateAsset} onReorderAssets={reorderAssets} onPreview={preview} onCreate={create} />}
+    {contextMenu && <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}>
+      {contextMenu.edgeIds?.length ? <><p>{contextMenu.edgeIds.length > 1 ? 'Связи' : 'Связь'}</p><button className="context-danger" onClick={() => { void onEdgesDelete(edges.filter(edge => contextMenu.edgeIds?.includes(Number(edge.id)))); setContextMenu(null) }}>Удалить {contextMenu.edgeIds.length > 1 ? 'связи' : 'связь'}</button></>
+        : contextMenu.nodeIds && contextMenu.nodeIds.length > 1 ? <><p>Выбрано: {contextMenu.nodeIds.length}</p><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'front'); setContextMenu(null) }}>На передний план</button><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'back'); setContextMenu(null) }}>На задний план</button><button className="context-danger" onClick={() => { setDeleteDialog(true); setContextMenu(null) }}>Удалить выбранные</button></>
+          : contextMenu.nodeId ? <><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) setClipboard(node); setContextMenu(null) }}>Копировать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) { setClipboard(node); setSelectedIds([node.id]); void remove() } setContextMenu(null) }}>Вырезать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) void duplicate(node); setContextMenu(null) }}>Дублировать</button><button onClick={() => { void setLayer([contextMenu.nodeId!], 'front'); setContextMenu(null) }}>На передний план</button><button onClick={() => { void setLayer([contextMenu.nodeId!], 'back'); setContextMenu(null) }}>На задний план</button></>
+            : <>{clipboard && <button onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(clipboard.type, point, clipboard); setContextMenu(null) }}>Вставить</button>}<p>Создать</p><button onClick={() => { void create('note', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Заметку</button><button onClick={() => { void create('media', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Медиакарточку</button><button onClick={() => { void create('track', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Музыку</button><button onClick={() => { void create('canvas_text', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Текст</button><button onClick={() => { pendingImagePositionRef.current = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); imageInputRef.current?.click(); setContextMenu(null) }}>Изображение</button></>}
+    </div>}
     {deleteDialog && selectedIds.length > 0 && <div className="confirm-backdrop"><div className="confirm-dialog"><p className="eyebrow">Удаление</p><h2>Удалить {selectedIds.length > 1 ? 'выбранные воспоминания' : 'воспоминание'}?</h2><p>Карточки, их файлы и связи будут удалены.</p><div><button onClick={() => setDeleteDialog(false)}>Отмена</button><button ref={confirmButton} className="confirm-delete" onClick={() => { setDeleteDialog(false); void remove() }}>Подтвердить</button></div></div></div>}
     {activeAsset && <div className="lightbox" onClick={() => setLightbox(null)}><button className="lightbox-close" onClick={() => setLightbox(null)}>×</button>{lightbox.assets.length > 1 && <button className="lightbox-nav prev" onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index: (current.index - 1 + current.assets.length) % current.assets.length } : current) }}>‹</button>}<div className="lightbox-content" onClick={event => event.stopPropagation()} key={activeAsset.id}>{activeAsset.mime_type.startsWith('image/') ? <img src={mediaUrl(activeAsset.storage_path)} alt={activeAsset.original_filename} /> : <video src={mediaUrl(activeAsset.storage_path)} controls autoPlay />}</div>{lightbox.assets.length > 1 && <button className="lightbox-nav next" onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index: (current.index + 1) % current.assets.length } : current) }}>›</button>}<div className="lightbox-footer"><p>{activeAsset.original_filename} {lightbox.assets.length > 1 && `• ${lightbox.index + 1}/${lightbox.assets.length}`}</p>{lightbox.assets.length > 1 && <div className="lightbox-thumbs">{lightbox.assets.map((asset, index) => <button key={asset.id} className={index === lightbox.index ? 'active' : ''} onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index } : current) }}>{asset.mime_type.startsWith('image/') ? <img src={mediaUrl(asset.preview_path || asset.storage_path)} alt={asset.original_filename} /> : <video src={mediaUrl(asset.storage_path)} muted preload="metadata" />}</button>)}</div>}</div></div>}
   </main>

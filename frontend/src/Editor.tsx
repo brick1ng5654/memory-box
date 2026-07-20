@@ -1,5 +1,5 @@
 import { ChangeEvent, useEffect, useState } from 'react'
-import { api, Asset, DatePosition, MemoryNode, NodeType, PlaylistItem, SpotifyTrack, Track, mediaUrl } from './api'
+import { api, Asset, CanvasObjectData, DatePosition, MemoryNode, NodeType, PlaylistItem, SpotifyTrack, Track, mediaUrl } from './api'
 
 type Props = {
   node: MemoryNode | null; boardStartDate: string; boardEndDate: string; onClose: () => void
@@ -29,12 +29,19 @@ export default function Editor({ node, boardStartDate, boardEndDate, onClose, on
   const [spotifyError, setSpotifyError] = useState('')
   const [spotifySearching, setSpotifySearching] = useState(false)
   const [durationText, setDurationText] = useState('0:00')
+  const [fontSizeInput, setFontSizeInput] = useState('42')
 
   useEffect(() => {
     setDraft(node ? { ...node, track_data: node.track_data ? { ...emptyTrack, ...node.track_data, playlist_items: node.track_data.playlist_items.map(item => ({ ...item, is_favorite: item.is_favorite ?? false })) } : undefined } : {})
     setDurationText(formatDuration(node?.track_data?.duration_seconds ?? 0))
+    setFontSizeInput(String(node?.object_data?.font_size ?? 42))
     setFiles([]); setError(''); setSpotifyQuery(''); setSpotifyResults([]); setSpotifyError('')
   }, [node?.id])
+  useEffect(() => {
+    if (node?.type !== 'canvas_text') return
+    setDraft(current => ({ ...current, object_data: node.object_data ? { ...node.object_data } : {} }))
+    setFontSizeInput(String(node.object_data?.font_size ?? 42))
+  }, [node?.id, node?.object_data])
   useEffect(() => {
     if (!node || node.type !== 'track' || spotifyQuery.trim().length < 2) { setSpotifyResults([]); setSpotifySearching(false); return }
     let cancelled = false
@@ -63,11 +70,27 @@ export default function Editor({ node, boardStartDate, boardEndDate, onClose, on
   const save = async (closeAfter = false) => { if (busy) return; setBusy(true); setError(''); try { await onSave(draft, files); setFiles([]); if (closeAfter) onClose() } catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'Ошибка сохранения') } finally { setBusy(false) } }
   const reorderFromDrag = async (targetId: number) => { if (!node || draggedAssetId === null || draggedAssetId === targetId) return; const items = [...node.media_assets]; const from = items.findIndex(asset => asset.id === draggedAssetId); const to = items.findIndex(asset => asset.id === targetId); if (from < 0 || to < 0) return; const [item] = items.splice(from, 1); items.splice(to, 0, item); setDraggedAssetId(null); setDropTargetId(null); await onReorderAssets(items) }
   if (!node) return null
+  if (node.type === 'canvas_text') {
+    const text = draft.object_data || {}
+    const textColors = ['#f7f2ff', '#f7b8c6', '#ffcb85', '#f4e57a', '#a7e6ba', '#8bd8ff', '#b7a4ff', '#f0a4f5', '#1c1a22']
+    const updateText = (patch: Partial<CanvasObjectData>) => updateDraft(current => ({ ...current, object_data: { ...(current.object_data || {}), ...patch } }))
+    return <aside className="editor" onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
+      <button className="close" onClick={() => void save(true)}>×</button><p className="eyebrow">Текст на холсте</p><h2>Оформление текста</h2>
+      <label>Текст<textarea value={text.text || ''} onChange={event => updateText({ text: event.target.value })} rows={5} /></label>
+      <label>Размер<input type="number" min="12" max="240" value={fontSizeInput} onChange={event => setFontSizeInput(event.target.value)} onBlur={() => { const size = Number(fontSizeInput); if (Number.isFinite(size) && size >= 12 && size <= 240) updateText({ font_size: size }); else setFontSizeInput(String(text.font_size || 42)) }} /></label>
+      <label>Шрифт<select value={text.font_family || "Inter, 'Segoe UI', Arial, sans-serif"} onChange={event => updateText({ font_family: event.target.value })}><option value="Inter, 'Segoe UI', Arial, sans-serif">Интер / системный</option><option value="'Segoe UI', Arial, sans-serif">Segoe UI</option><option value="Arial, Helvetica, sans-serif">Arial</option><option value="Verdana, Geneva, sans-serif">Verdana</option><option value="Georgia, 'Times New Roman', serif">Georgia</option><option value="'Times New Roman', Times, serif">Times New Roman</option><option value="'Courier New', Courier, monospace">Courier New</option><option value="'Neucha', cursive">Neucha</option><option value="'Yeseva One', serif">Yeseva One</option><option value="'Comfortaa', sans-serif">Comfortaa</option><option value="'Unbounded', sans-serif">Unbounded</option><option value="'Rubik Mono One', monospace">Rubik Mono One</option></select></label>
+      <label className="toggle-label"><input type="checkbox" checked={text.font_weight || false} onChange={event => updateText({ font_weight: event.target.checked })} />Жирный</label>
+      <label className="toggle-label"><input type="checkbox" checked={text.font_style || false} onChange={event => updateText({ font_style: event.target.checked })} />Курсив</label>
+      <label>Выравнивание<select value={text.text_align || 'left'} onChange={event => updateText({ text_align: event.target.value as CanvasObjectData['text_align'] })}><option value="left">Слева</option><option value="center">По центру</option><option value="right">Справа</option><option value="justify">По ширине</option></select></label>
+      <label>Цвет</label><div className="text-color-palette" aria-label="Палитра цветов">{textColors.map(color => <button key={color} type="button" className={text.color === color ? 'active' : ''} style={{ backgroundColor: color }} title={color} onClick={() => updateText({ color })} />)}</div><label>Свой цвет<input type="color" value={text.color || '#f7f2ff'} onChange={event => updateText({ color: event.target.value })} /></label>
+      {error && <p className="error">{error}</p>}<div className="editor-actions"><button className="danger" onClick={onRequestDelete}>Удалить</button>{busy && <span className="saving">Сохраняю…</span>}</div>
+    </aside>
+  }
   const track = { ...emptyTrack, ...(draft.track_data || {}) }
   const spotifySearch = <div className="spotify-search"><label>Найти в Spotify<input value={spotifyQuery} onChange={event => setSpotifyQuery(event.target.value)} placeholder="Название трека или исполнитель" autoComplete="off" /></label>{spotifySearching && <p className="spotify-search-state">Ищу в Spotify…</p>}{spotifyError && <p className="error">{spotifyError}</p>}{spotifyResults.length > 0 && <div className="spotify-results">{spotifyResults.map(result => <button type="button" key={result.id} onClick={() => selectSpotifyTrack(result)}>{result.cover_url ? <img src={result.cover_url} alt="" /> : <span className="spotify-result-cover" />}<span><strong>{result.title}</strong><small>{result.artist}</small></span></button>)}</div>}</div>
 
   return <aside className="editor" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) void save() }} onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
-    <button className="close" onClick={() => void save(true)}>×</button><p className="eyebrow">{node.type === 'track' ? 'Музыка' : node.type === 'media' ? 'Медиа' : 'Заметка'}</p><h2>Воспоминание</h2>
+    <button className="close" onClick={() => void save(true)}>×</button><p className="eyebrow">{node.type === 'track' ? 'Музыка' : node.type === 'media' ? 'Медиакарточка' : 'Заметка'}</p><h2>Воспоминание</h2>
     {node.type !== 'track' && <label>Название<input value={draft.title || ''} onChange={event => updateDraft({ title: event.target.value })} placeholder={node.type === 'note' ? 'Можно оставить пустым' : 'Короткое название'} /></label>}
     {node.type === 'note' && <label>Текст<textarea value={draft.text_content || ''} onChange={event => updateDraft({ text_content: event.target.value })} placeholder="Что хочется сохранить?" rows={7} /></label>}
     {node.type === 'media' && <><label>Добавить файлы<input type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,video/x-m4v,.m4v" onChange={(event: ChangeEvent<HTMLInputElement>) => setFiles(Array.from(event.target.files || []))} /></label>{files.length > 0 && <p className="queued-files">Будет загружено: {files.map(file => file.name).join(', ')}</p>}<div className="asset-list">{node.media_assets.map(asset => <div className={`asset-row ${draggedAssetId === asset.id ? 'dragging' : ''} ${dropTargetId === asset.id && draggedAssetId !== asset.id ? 'drop-target' : ''}`} key={asset.id} draggable onDragStart={() => setDraggedAssetId(asset.id)} onDragEnd={() => { setDraggedAssetId(null); setDropTargetId(null) }} onDragOver={event => { event.preventDefault(); setDropTargetId(asset.id) }} onDragLeave={() => setDropTargetId(current => current === asset.id ? null : current)} onDrop={() => void reorderFromDrag(asset.id)}><span className="drag-handle" title="Перетащите для изменения порядка">⠿</span><button className={`favorite-asset ${asset.is_favorite ? 'active' : ''}`} title="Показывать в превью" onClick={() => onUpdateAsset(asset, { is_favorite: !asset.is_favorite })}>★</button><a href={mediaUrl(asset.storage_path)} target="_blank">{asset.original_filename}</a><button className="remove-asset" title="Удалить файл" onClick={() => onDeleteAsset(asset)}>×</button></div>)}</div></>}

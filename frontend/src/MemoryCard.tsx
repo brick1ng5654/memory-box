@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react'
 import { Handle, Node, NodeProps, NodeResizer, Position, useUpdateNodeInternals } from '@xyflow/react'
-import { Asset, MemoryNode, PlaylistItem, mediaUrl } from './api'
+import { Asset, CanvasObjectData, MemoryNode, PlaylistItem, mediaUrl } from './api'
 
-const labels = { note: 'Заметка', media: 'Медиа', track: 'Музыка' }
+const labels = { note: 'Заметка', media: 'Медиакарточка', track: 'Музыка' }
 const icons = { note: '✦', media: '◒', track: '♫' }
 const formatNodeDate = (value: string) => new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' }).format(new Date(`${value}T00:00:00`))
 const formatTrackDuration = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 const resizeLimits = (type: MemoryNode['type'], isPlaylist: boolean, largeCover: boolean) => {
+  if (type === 'canvas_text') return { minWidth: 80, minHeight: 44 }
+  if (type === 'canvas_image') return { minWidth: 80, minHeight: 80 }
   if (type === 'media') return { minWidth: 120, minHeight: 100 }
   if (type === 'note') return { minWidth: 120, minHeight: 80 }
   return { minWidth: isPlaylist && largeCover ? 180 : 150, minHeight: isPlaylist && largeCover ? 180 : largeCover ? 170 : 110 }
 }
-export type FlowData = MemoryNode & { onOpenMedia?: (assets: Asset[], index: number) => void; isConnecting?: boolean } & Record<string, unknown>
+export type FlowData = MemoryNode & { onOpenMedia?: (assets: Asset[], index: number) => void; onObjectChange?: (patch: Partial<MemoryNode>) => void; isConnecting?: boolean } & Record<string, unknown>
 export type FlowMemoryNode = Node<FlowData, 'memory'>
 
 function MediaTile({ asset, index, assets, onOpen }: { asset: Asset; index: number; assets: Asset[]; onOpen?: (assets: Asset[], index: number) => void }) {
@@ -49,6 +51,8 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
   const resizeLimit = resizeLimits(node.type, isPlaylist, largeCover)
   useEffect(() => { updateNodeInternals(id) }, [id, playlistOpen, node.isConnecting, selected, updateNodeInternals])
 
+  if (node.type === 'canvas_text' || node.type === 'canvas_image') return <CanvasObject node={node} selected={selected} resizeLimit={resizeLimit} />
+
   return <div className={`memory-card ${node.type} ${isPlaylist ? 'playlist-card' : ''} ${largeCover ? 'music-large' : ''} ${hideTrackDetails ? 'cover-only' : ''} ${node.height ? 'sized' : ''} ${node.show_type_label ? 'has-type-label' : ''} ${dateSpaceClass} ${mediaTitleClass} ${selected ? 'selected' : ''}`}>
     <NodeResizer isVisible={selected} {...resizeLimit} maxWidth={2400} maxHeight={1800} lineClassName="resize-line" handleClassName="resize-handle music-resize-handle" />
     <Handle id="left" className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="source" position={Position.Left} isConnectableStart isConnectableEnd style={{ top: '50%', transform: 'translateY(-50%)' }} />
@@ -70,6 +74,28 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
     <Handle id="bottom" className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="source" position={Position.Bottom} isConnectableStart isConnectableEnd style={{ left: '50%', transform: 'translateX(-50%)' }} />
     <Handle id="right" className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="source" position={Position.Right} isConnectableStart isConnectableEnd style={{ top: '50%', transform: 'translateY(-50%)' }} />
   </div>
+}
+
+function CanvasObject({ node, selected, resizeLimit }: { node: FlowData; selected: boolean; resizeLimit: { minWidth: number; minHeight: number } }) {
+  const data = node.object_data || {}
+  return <div className={`canvas-object ${node.type} ${selected ? 'selected' : ''}`}>
+    <NodeResizer isVisible={selected} {...resizeLimit} maxWidth={2400} maxHeight={1800} lineClassName="resize-line" handleClassName="resize-handle" />
+    <div className="object-drag-handle" title="Перетащить объект" />
+    {node.type === 'canvas_text' && <CanvasText data={data} onChange={node.onObjectChange} />}
+    {node.type === 'canvas_image' && <CanvasImage assets={node.media_assets} />}
+  </div>
+}
+
+function CanvasText({ data, onChange }: { data: CanvasObjectData; onChange?: (patch: Partial<MemoryNode>) => void }) {
+  const update = (text: string) => onChange?.({ object_data: { ...data, text } })
+  return <div className="canvas-text-wrap">
+    <div className="canvas-text nodrag" contentEditable suppressContentEditableWarning style={{ fontSize: data.font_size || 42, fontFamily: data.font_family || "Inter, 'Segoe UI', Arial, sans-serif", fontWeight: data.font_weight ? 800 : 500, fontStyle: data.font_style ? 'italic' : 'normal', textAlign: data.text_align || 'left', color: data.color || '#f7f2ff' }} onInput={event => update(event.currentTarget.textContent || '')}>{data.text || 'Текст'}</div>
+  </div>
+}
+
+function CanvasImage({ assets }: { assets: Asset[] }) {
+  const asset = assets[0]
+  return asset ? <img className="canvas-image" src={mediaUrl(asset.storage_path)} alt={asset.original_filename} draggable={false} /> : <span className="canvas-image-empty">PNG</span>
 }
 
 function MediaPreview({ assets, onOpen }: { assets: Asset[]; onOpen?: (assets: Asset[], index: number) => void }) {
