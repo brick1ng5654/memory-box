@@ -328,12 +328,12 @@ def copy_media_file(relative_path: str) -> str:
 @app.post("/api/nodes/{node_id}/duplicate-media", response_model=NodeRead, status_code=status.HTTP_201_CREATED)
 def duplicate_media_node(node_id: int, payload: MediaNodeDuplicate, db: Session = Depends(get_db)):
     source = node_or_404(node_id, db)
-    if source.type != NodeType.media:
-        raise HTTPException(400, "Дублировать с файлами можно только медиа-узел")
+    if source.type not in (NodeType.media, NodeType.canvas_image):
+        raise HTTPException(400, "Дублировать с файлами можно только медиакарточку или изображение")
     copied_assets = []
     for asset in source.media_assets:
         copied_assets.append((asset, copy_media_file(asset.storage_path), copy_media_file(asset.preview_path) if asset.preview_path else None))
-    duplicate = MemoryNode(board_id=source.board_id, type=NodeType.media, title=source.title, text_content=source.text_content, position_x=payload.position_x, position_y=payload.position_y, z_index=payload.z_index, width=source.width, height=source.height, temporal_date=source.temporal_date, show_date=source.show_date, show_type_label=source.show_type_label, date_position=source.date_position, title_position=source.title_position)
+    duplicate = MemoryNode(board_id=source.board_id, type=source.type, title=source.title, text_content=source.text_content, position_x=payload.position_x, position_y=payload.position_y, z_index=payload.z_index, width=source.width, height=source.height, temporal_date=source.temporal_date, show_date=source.show_date, show_type_label=source.show_type_label, date_position=source.date_position, title_position=source.title_position, object_data=dict(source.object_data) if source.object_data else None)
     db.add(duplicate)
     db.flush()
     for asset, storage_path, preview_path in copied_assets:

@@ -78,24 +78,27 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
 
 function CanvasObject({ node, selected, resizeLimit }: { node: FlowData; selected: boolean; resizeLimit: { minWidth: number; minHeight: number } }) {
   const data = node.object_data || {}
-  return <div className={`canvas-object ${node.type} ${selected ? 'selected' : ''}`}>
+  const hasText = node.type === 'canvas_text' && Boolean(data.text?.trim())
+  return <div className={`canvas-object ${node.type} ${hasText ? 'has-text' : ''} ${selected ? 'selected' : ''}`}>
     <NodeResizer isVisible={selected} {...resizeLimit} maxWidth={2400} maxHeight={1800} lineClassName="resize-line" handleClassName="resize-handle" />
     <div className="object-drag-handle" title="Перетащить объект" />
     {node.type === 'canvas_text' && <CanvasText data={data} onChange={node.onObjectChange} />}
-    {node.type === 'canvas_image' && <CanvasImage assets={node.media_assets} />}
+    {node.type === 'canvas_image' && <CanvasImage assets={node.media_assets} data={data} />}
   </div>
 }
 
 function CanvasText({ data, onChange }: { data: CanvasObjectData; onChange?: (patch: Partial<MemoryNode>) => void }) {
   const update = (text: string) => onChange?.({ object_data: { ...data, text } })
-  return <div className="canvas-text-wrap">
-    <div className="canvas-text nodrag" contentEditable suppressContentEditableWarning style={{ fontSize: data.font_size || 42, fontFamily: data.font_family || "Inter, 'Segoe UI', Arial, sans-serif", fontWeight: data.font_weight ? 800 : 500, fontStyle: data.font_style ? 'italic' : 'normal', textAlign: data.text_align || 'left', color: data.color || '#f7f2ff' }} onInput={event => update(event.currentTarget.textContent || '')}>{data.text || 'Текст'}</div>
+  return <div className="canvas-text-wrap" style={{ transform: `rotate(${data.rotation || 0}deg)` }}>
+    <div className="canvas-text nodrag" contentEditable suppressContentEditableWarning spellCheck={false} style={{ fontSize: data.font_size || 42, fontFamily: data.font_family || "Inter, 'Segoe UI', Arial, sans-serif", fontWeight: data.font_weight ? 800 : 500, fontStyle: data.font_style ? 'italic' : 'normal', textAlign: data.text_align || 'left', color: data.color || '#f7f2ff' }} onInput={event => update(event.currentTarget.textContent || '')}>{data.text || ''}</div>
   </div>
 }
 
-function CanvasImage({ assets }: { assets: Asset[] }) {
+function CanvasImage({ assets, data }: { assets: Asset[]; data: CanvasObjectData }) {
   const asset = assets[0]
-  return asset ? <img className="canvas-image" src={mediaUrl(asset.storage_path)} alt={asset.original_filename} draggable={false} /> : <span className="canvas-image-empty">PNG</span>
+  const scaleX = data.flip_x ? -1 : 1
+  const scaleY = data.flip_y ? -1 : 1
+  return asset ? <img className="canvas-image" style={{ transform: `rotate(${data.rotation || 0}deg) scale(${scaleX}, ${scaleY})` }} src={mediaUrl(asset.storage_path)} alt={asset.original_filename} draggable={false} /> : <span className="canvas-image-empty">PNG</span>
 }
 
 function MediaPreview({ assets, onOpen }: { assets: Asset[]; onOpen?: (assets: Asset[], index: number) => void }) {
