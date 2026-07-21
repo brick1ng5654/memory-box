@@ -35,7 +35,7 @@ function MemoryBezierEdge({ id, sourceX, sourceY, sourcePosition, targetX, targe
 const edgeTypes = { memory: MemoryBezierEdge }
 
 function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void }) {
-  const { screenToFlowPosition } = useReactFlow()
+  const { screenToFlowPosition, setCenter } = useReactFlow()
   const [board, setBoard] = useState<Board | null>(null)
   const [nodes, setNodes] = useNodesState<FlowMemoryNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
@@ -49,6 +49,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   const [clipboard, setClipboard] = useState<MemoryNode | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId?: number; nodeIds?: number[]; edgeIds?: number[] } | null>(null)
   const [zoom, setZoom] = useState(1)
+  const [initialFocus, setInitialFocus] = useState<{ x: number; y: number } | null>(null)
   const confirmButton = useRef<HTMLButtonElement>(null)
   const nodesRef = useRef(nodes)
   const selectedRef = useRef<MemoryNode | null>(null)
@@ -74,12 +75,20 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
       setBoard(next)
       setNodes(next.nodes.map(node => toFlowNode(node, openMedia, patch => objectChange(node.id, patch))))
       setEdges(next.edges.map(toFlowEdge))
+      const datedNodes = next.nodes.filter(node => node.temporal_date).sort((left, right) => (left.temporal_date || '').localeCompare(right.temporal_date || '') || left.id - right.id)
+      const focusNode = datedNodes[0] || next.nodes[0]
+      if (focusNode) setInitialFocus({ x: focusNode.position_x + (focusNode.width ?? defaultNodeWidth(focusNode)) / 2, y: focusNode.position_y + (focusNode.height ?? defaultNodeHeight(focusNode) ?? 180) / 2 })
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Не удалось загрузить холст')
     } finally { setLoading(false) }
   }, [boardId, openMedia, setEdges, setNodes])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => {
+    if (loading || !initialFocus) return
+    const frame = requestAnimationFrame(() => { zoomRef.current = 0.85; setZoom(0.85); void setCenter(initialFocus.x, initialFocus.y, { zoom: 0.85, duration: 0 }) })
+    return () => cancelAnimationFrame(frame)
+  }, [initialFocus, loading, setCenter])
   useEffect(() => { nodesRef.current = nodes }, [nodes])
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { if (deleteDialog) requestAnimationFrame(() => confirmButton.current?.focus()) }, [deleteDialog])
@@ -178,7 +187,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
       if (change.type === 'dimensions' && !change.resizing && change.dimensions) {
         const node = nodesRef.current.find(item => item.id === change.id)
         const position = resizedPositions.get(change.id) ?? node?.position
-        if (node && (node.data.width !== change.dimensions.width || node.data.height !== change.dimensions.height)) void syncNode(change.id, { width: change.dimensions.width, height: change.dimensions.height, position_x: position?.x, position_y: position?.y })
+        if (node && !['canvas_text', 'canvas_image'].includes(node.data.type) && (node.data.width !== change.dimensions.width || node.data.height !== change.dimensions.height)) void syncNode(change.id, { width: change.dimensions.width, height: change.dimensions.height, position_x: position?.x, position_y: position?.y })
       }
     }
   }, [setNodes, syncNode])
@@ -403,7 +412,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
     {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
     <input ref={imageInputRef} className="visually-hidden" type="file" accept="image/png,.png" onChange={event => { const file = event.target.files?.[0]; const position = pendingImagePositionRef.current; event.currentTarget.value = ''; if (file && position) void createPng(file, position) }} />
     <section ref={canvasRef} className="canvas-wrap" onPointerMoveCapture={event => { canvasPointerRef.current = { x: event.clientX, y: event.clientY } }} onMouseDownCapture={event => { if (event.button === 2) contextSelectionRef.current = { nodeIds: nodes.filter(node => node.selected).map(node => Number(node.id)), edgeIds: edges.filter(edge => edge.selected).map(edge => Number(edge.id)) } }} onContextMenuCapture={event => { const target = event.target as HTMLElement; const nodeElement = target.closest<HTMLElement>('.react-flow__node'); const edgeElement = target.closest<HTMLElement>('.react-flow__edge'); const nodeId = Number(nodeElement?.dataset.id); const edgeId = Number(edgeElement?.dataset.id); openContextMenu(event, Number.isFinite(nodeId) ? nodeId : undefined, Number.isFinite(edgeId) ? [edgeId] : undefined) }}>
-      <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onSelectionChange={onSelectionChange} onNodeClick={(_, node) => { setSelected(node.data); setSelectedIds([Number(node.id)]); setSelectedEdgeIds([]) }} onEdgeClick={(_, edge) => { setSelectedEdgeIds([Number(edge.id)]); setSelected(null); setSelectedIds([]) }} onNodeContextMenu={(event, node) => openContextMenu(event, Number(node.id))} onEdgeContextMenu={(event, edge) => { const id = Number(edge.id); openContextMenu(event, undefined, selectedEdgeIds.length > 1 && selectedEdgeIds.includes(id) ? selectedEdgeIds : [id]) }} onPaneContextMenu={event => openContextMenu(event)} onPaneClick={() => { setSelected(null); setSelectedIds([]); setSelectedEdgeIds([]) }} onNodeDragStop={(_, node) => void syncNode(node.id, { position_x: node.position.x, position_y: node.position.y })} onConnectStart={(_, params) => { connectionSourceRef.current = params.nodeId; setConnectionCandidate(null) }} onConnectEnd={() => { connectionSourceRef.current = null; setConnectionCandidate(null) }} onMouseMove={onConnectionPointerMove} onConnect={onConnect} onMove={(_, viewport) => { if (Math.abs(viewport.zoom - zoomRef.current) >= 0.02) { zoomRef.current = viewport.zoom; setZoom(viewport.zoom) } }} nodeTypes={nodeTypes} edgeTypes={edgeTypes} deleteKeyCode={null} connectionMode={ConnectionMode.Loose} connectionRadius={32} proOptions={{ hideAttribution: true }} onlyRenderVisibleElements fitView minZoom={0.2} maxZoom={2} defaultEdgeOptions={{ type: 'memory' }}>
+      <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onSelectionChange={onSelectionChange} onNodeClick={(_, node) => { setSelected(node.data); setSelectedIds([Number(node.id)]); setSelectedEdgeIds([]) }} onEdgeClick={(_, edge) => { setSelectedEdgeIds([Number(edge.id)]); setSelected(null); setSelectedIds([]) }} onNodeContextMenu={(event, node) => openContextMenu(event, Number(node.id))} onEdgeContextMenu={(event, edge) => { const id = Number(edge.id); openContextMenu(event, undefined, selectedEdgeIds.length > 1 && selectedEdgeIds.includes(id) ? selectedEdgeIds : [id]) }} onPaneContextMenu={event => openContextMenu(event)} onPaneClick={() => { setSelected(null); setSelectedIds([]); setSelectedEdgeIds([]) }} onNodeDragStop={(_, node) => void syncNode(node.id, { position_x: node.position.x, position_y: node.position.y })} onConnectStart={(_, params) => { connectionSourceRef.current = params.nodeId; setConnectionCandidate(null) }} onConnectEnd={() => { connectionSourceRef.current = null; setConnectionCandidate(null) }} onMouseMove={onConnectionPointerMove} onConnect={onConnect} onMove={(_, viewport) => { if (Math.abs(viewport.zoom - zoomRef.current) >= 0.02) { zoomRef.current = viewport.zoom; setZoom(viewport.zoom) } }} nodeTypes={nodeTypes} edgeTypes={edgeTypes} deleteKeyCode={null} connectionMode={ConnectionMode.Loose} connectionRadius={32} proOptions={{ hideAttribution: true }} onlyRenderVisibleElements minZoom={0.2} maxZoom={2} defaultEdgeOptions={{ type: 'memory' }}>
         <Background variant={BackgroundVariant.Dots} color="#484252" gap={20} size={dotSize} />
       </ReactFlow>
       <div className="timeline"><span>{formatPeriod(board)}</span><div className="timeline-scroll" onWheel={event => { if (event.deltaY) { event.currentTarget.scrollLeft += event.deltaY; event.preventDefault() } }}><div className="timeline-days">{days.map(date => { const datedNodes = board.nodes.filter(node => node.temporal_date === date); const bookmarks = datedNodes.length < 2 ? [] : datedNodes.filter((_, index) => index % 2 === 0).slice(0, 5); const day = Number(date.slice(8)); return <i key={date}><b className="timeline-bookmarks">{bookmarks.map((node, index) => <em key={node.id} className={`timeline-bookmark ${node.type}`} style={{ bottom: index * 9 }} title={node.title || node.track_data?.title || 'Воспоминание'} />)}</b><small>{day}</small></i> })}</div></div></div>

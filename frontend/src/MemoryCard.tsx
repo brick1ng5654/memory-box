@@ -80,7 +80,7 @@ function CanvasObject({ node, selected, resizeLimit }: { node: FlowData; selecte
   const data = node.object_data || {}
   const hasText = node.type === 'canvas_text' && Boolean(data.text?.trim())
   return <div className={`canvas-object ${node.type} ${hasText ? 'has-text' : ''} ${selected ? 'selected' : ''}`}>
-    <NodeResizer isVisible={selected} {...resizeLimit} maxWidth={2400} maxHeight={1800} lineClassName="resize-line" handleClassName="resize-handle" />
+    <NodeResizer isVisible={selected} {...resizeLimit} maxWidth={2400} maxHeight={1800} lineClassName="resize-line" handleClassName="resize-handle" onResizeEnd={(_, params) => node.onObjectChange?.({ width: params.width, height: params.height, position_x: params.x, position_y: params.y })} />
     <div className="object-drag-handle" title="Перетащить объект" />
     {node.type === 'canvas_text' && <CanvasText data={data} onChange={node.onObjectChange} />}
     {node.type === 'canvas_image' && <CanvasImage assets={node.media_assets} data={data} />}
