@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useState } from 'react'
+import { ChangeEvent, useEffect, useRef, useState } from 'react'
 import { api, Asset, CanvasObjectData, DatePosition, MemoryNode, NodeType, PlaylistItem, SpotifyTrack, Track, mediaUrl } from './api'
 
 type Props = {
@@ -30,6 +30,7 @@ export default function Editor({ node, boardStartDate, boardEndDate, onClose, on
   const [spotifySearching, setSpotifySearching] = useState(false)
   const [durationText, setDurationText] = useState('0:00')
   const [fontSizeInput, setFontSizeInput] = useState('42')
+  const trackSaveQueue = useRef(Promise.resolve())
 
   useEffect(() => {
     setDraft(node ? { ...node, track_data: node.track_data ? { ...emptyTrack, ...node.track_data, playlist_items: node.track_data.playlist_items.map(item => ({ ...item, is_favorite: item.is_favorite ?? false })) } : undefined } : {})
@@ -54,20 +55,25 @@ export default function Editor({ node, boardStartDate, boardEndDate, onClose, on
     return () => { cancelled = true; window.clearTimeout(timer) }
   }, [node?.id, node?.type, spotifyQuery])
 
-  const updateDraft = (updater: Partial<MemoryNode> | ((current: Partial<MemoryNode>) => Partial<MemoryNode>)) => setDraft(current => { const next = typeof updater === 'function' ? updater(current) : { ...current, ...updater }; onPreview(next); return next })
-  const updateTrack = (key: keyof Track, value: Track[keyof Track]) => updateDraft(current => ({ ...current, track_data: { ...emptyTrack, ...(current.track_data || {}), [key]: value } }))
-  const updatePlaylistItem = (index: number, key: keyof PlaylistItem, value: PlaylistItem[keyof PlaylistItem]) => updateDraft(current => { const track = { ...emptyTrack, kind: 'playlist' as const, ...(current.track_data || {}) }; return { ...current, track_data: { ...track, playlist_items: track.playlist_items.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: value } : item) } } })
-  const reorderPlaylistItems = (from: number, to: number) => updateDraft(current => { const track = { ...emptyTrack, kind: 'playlist' as const, ...(current.track_data || {}) }; const items = [...track.playlist_items]; const [item] = items.splice(from, 1); items.splice(to, 0, item); return { ...current, track_data: { ...track, playlist_items: items } } })
+  const queueTrackSave = (next: Partial<MemoryNode>) => {
+    const pending = trackSaveQueue.current.catch(() => undefined).then(() => onSave(next))
+    trackSaveQueue.current = pending
+    void pending.catch(saveError => setError(saveError instanceof Error ? saveError.message : 'Не удалось сохранить плейлист'))
+  }
+  const updateDraft = (updater: Partial<MemoryNode> | ((current: Partial<MemoryNode>) => Partial<MemoryNode>), persistTrack = false) => setDraft(current => { const next = typeof updater === 'function' ? updater(current) : { ...current, ...updater }; onPreview(next); if (persistTrack) queueTrackSave(next); return next })
+  const updateTrack = (key: keyof Track, value: Track[keyof Track]) => updateDraft(current => ({ ...current, track_data: { ...emptyTrack, ...(current.track_data || {}), [key]: value } }), true)
+  const updatePlaylistItem = (index: number, key: keyof PlaylistItem, value: PlaylistItem[keyof PlaylistItem]) => updateDraft(current => { const track = { ...emptyTrack, kind: 'playlist' as const, ...(current.track_data || {}) }; return { ...current, track_data: { ...track, playlist_items: track.playlist_items.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: value } : item) } } }, true)
+  const reorderPlaylistItems = (from: number, to: number) => updateDraft(current => { const track = { ...emptyTrack, kind: 'playlist' as const, ...(current.track_data || {}) }; const items = [...track.playlist_items]; const [item] = items.splice(from, 1); items.splice(to, 0, item); return { ...current, track_data: { ...track, playlist_items: items } } }, true)
   const selectSpotifyTrack = (result: SpotifyTrack) => {
     updateDraft(current => {
       const track = { ...emptyTrack, ...(current.track_data || {}) }
       if (track.kind === 'playlist') return { ...current, track_data: { ...track, playlist_items: [...track.playlist_items, { title: result.title, artist: result.artist, cover_url: result.cover_url || null, is_favorite: false }] } }
       return { ...current, track_data: { ...track, title: result.title, artist: result.artist, spotify_id: result.id, spotify_cover_url: result.cover_url || null, duration_seconds: result.duration_seconds } }
-    })
+    }, true)
     setDurationText(formatDuration(result.duration_seconds))
     setSpotifyQuery(''); setSpotifyResults([]); setSpotifyError('')
   }
-  const save = async (closeAfter = false) => { if (busy) return; setBusy(true); setError(''); try { await onSave(draft, files); setFiles([]); if (closeAfter) onClose() } catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'Ошибка сохранения') } finally { setBusy(false) } }
+  const save = async (closeAfter = false) => { if (busy) return; setBusy(true); setError(''); try { await trackSaveQueue.current; await onSave(draft, files); setFiles([]); if (closeAfter) onClose() } catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'Ошибка сохранения') } finally { setBusy(false) } }
   const reorderFromDrag = async (targetId: number) => { if (!node || draggedAssetId === null || draggedAssetId === targetId) return; const items = [...node.media_assets]; const from = items.findIndex(asset => asset.id === draggedAssetId); const to = items.findIndex(asset => asset.id === targetId); if (from < 0 || to < 0) return; const [item] = items.splice(from, 1); items.splice(to, 0, item); setDraggedAssetId(null); setDropTargetId(null); await onReorderAssets(items) }
   if (!node) return null
   if (node.type === 'canvas_text') {
