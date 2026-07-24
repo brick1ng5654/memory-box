@@ -119,14 +119,29 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [lightbox, selected, selectedIds, selectedEdgeIds, clipboard, setEdges])
 
-  const replaceNode = useCallback((updated: MemoryNode) => {
+  const replaceNode = useCallback((updated: MemoryNode, preserveExistingMedia = false) => {
     setNodes(list => list.map(node => node.id === String(updated.id) ? {
       ...node,
       style: { ...node.style, width: updated.width ?? defaultNodeWidth(updated), height: updated.height ?? defaultNodeHeight(updated), zIndex: updated.z_index },
-      data: { ...node.data, ...updated, onOpenMedia: openMedia, onObjectChange: patch => objectChange(updated.id, patch) },
+      data: {
+        ...node.data,
+        ...updated,
+        media_assets: preserveExistingMedia && updated.media_assets.length === 0 && node.data.media_assets.length > 0 ? node.data.media_assets : updated.media_assets,
+        onOpenMedia: openMedia,
+        onObjectChange: patch => objectChange(updated.id, patch),
+      },
     } : node))
-    setBoard(current => current ? { ...current, nodes: current.nodes.map(node => node.id === updated.id ? updated : node) } : current)
-    setSelected(current => current?.id === updated.id ? updated : current)
+    setBoard(current => current ? {
+      ...current,
+      nodes: current.nodes.map(node => node.id === updated.id ? {
+        ...updated,
+        media_assets: preserveExistingMedia && updated.media_assets.length === 0 && node.media_assets.length > 0 ? node.media_assets : updated.media_assets,
+      } : node),
+    } : current)
+    setSelected(current => current?.id === updated.id ? {
+      ...updated,
+      media_assets: preserveExistingMedia && updated.media_assets.length === 0 && current.media_assets.length > 0 ? current.media_assets : updated.media_assets,
+    } : current)
   }, [objectChange, openMedia, setNodes])
   const setLayer = async (ids: number[], direction: 'front' | 'back') => {
     if (!board || !ids.length) return
@@ -136,7 +151,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
     const start = direction === 'front' ? boundary + 1 : boundary - targets.length
     try {
       const saved = await Promise.all(targets.map((node, index) => api.updateNode(node.id, { z_index: start + index })))
-      saved.forEach(replaceNode)
+      saved.forEach(node => replaceNode(node))
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось изменить порядок слоёв') }
   }
   const syncNode = useCallback(async (id: string, data: Partial<MemoryNode>) => {
@@ -321,7 +336,8 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   const save = async (draft: Partial<MemoryNode>, files: File[] = []) => {
     if (!selected) return
     const updated = await api.updateNode(selected.id, { title: draft.title, text_content: draft.text_content, temporal_date: draft.temporal_date, show_date: draft.show_date, show_type_label: draft.show_type_label, date_position: draft.date_position, track_data: draft.track_data, object_data: draft.object_data })
-    replaceNode(updated)
+    // Metadata saves must not erase a file that was uploaded concurrently.
+    replaceNode(updated, true)
     const errors: string[] = []
     for (const file of files) {
       try { await api.upload(updated.id, file) }

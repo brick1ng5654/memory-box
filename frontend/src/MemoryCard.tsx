@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Handle, Node, NodeProps, NodeResizer, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { Asset, CanvasObjectData, MemoryNode, PlaylistItem, mediaUrl } from './api'
 
@@ -95,7 +95,11 @@ function CanvasText({ data, onChange }: { data: CanvasObjectData; onChange?: (pa
 }
 
 function CanvasImage({ assets, data }: { assets: Asset[]; data: CanvasObjectData }) {
-  const asset = assets[0]
+  const lastLoadedAsset = useRef<Asset | null>(null)
+  if (assets[0]) lastLoadedAsset.current = assets[0]
+  // Metadata updates can briefly arrive before the already-uploaded asset.
+  // A canvas image owns exactly one PNG, so retain the last known asset here.
+  const asset = assets[0] || lastLoadedAsset.current
   const scaleX = data.flip_x ? -1 : 1
   const scaleY = data.flip_y ? -1 : 1
   return asset ? <img className="canvas-image" style={{ transform: `rotate(${data.rotation || 0}deg) scale(${scaleX}, ${scaleY})` }} src={mediaUrl(asset.storage_path)} alt={asset.original_filename} draggable={false} /> : <span className="canvas-image-empty">PNG</span>
