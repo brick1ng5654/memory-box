@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { Handle, Node, NodeProps, NodeResizer, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { Asset, CanvasObjectData, MemoryNode, PlaylistItem, mediaUrl } from './api'
 
@@ -13,7 +13,7 @@ const resizeLimits = (type: MemoryNode['type'], isPlaylist: boolean, largeCover:
   if (type === 'note') return { minWidth: 120, minHeight: 80 }
   return { minWidth: isPlaylist && largeCover ? 180 : 150, minHeight: isPlaylist && largeCover ? 180 : largeCover ? 170 : 110 }
 }
-export type FlowData = MemoryNode & { onOpenMedia?: (assets: Asset[], index: number) => void; onObjectChange?: (patch: Partial<MemoryNode>) => void; isConnecting?: boolean } & Record<string, unknown>
+export type FlowData = MemoryNode & { onOpenMedia?: (assets: Asset[], index: number) => void; onObjectChange?: (patch: Partial<MemoryNode>) => void; onPlaylistToggle?: () => void; playlistOpen?: boolean; isConnecting?: boolean } & Record<string, unknown>
 export type FlowMemoryNode = Node<FlowData, 'memory'>
 
 function MediaTile({ asset, index, assets, onOpen }: { asset: Asset; index: number; assets: Asset[]; onOpen?: (assets: Asset[], index: number) => void }) {
@@ -33,7 +33,7 @@ function PlaylistRows({ items, preview = false }: { items: PlaylistItem[]; previ
 
 export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryNode>) {
   const node = data
-  const [playlistOpen, setPlaylistOpen] = useState(false)
+  const playlistOpen = node.playlistOpen ?? false
   const updateNodeInternals = useUpdateNodeInternals()
   const isPlaylist = node.type === 'track' && node.track_data?.kind === 'playlist'
   const playlistItems = node.track_data?.playlist_items || []
@@ -68,7 +68,7 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
     {isPlaylist && <div className="playlist-summary">
       {!hideTitle && <h3>{node.track_data?.title}</h3>}
       <p>{playlistItems.length} треков</p>
-      <button className="playlist-toggle nodrag" onClick={event => { event.stopPropagation(); setPlaylistOpen(value => !value) }}>{playlistOpen ? 'Скрыть треки' : 'Показать треки'}</button>
+      <button className="playlist-toggle nodrag" onClick={event => { event.stopPropagation(); node.onPlaylistToggle?.() }}>{playlistOpen ? 'Скрыть треки' : 'Показать треки'}</button>
     </div>}
     {isPlaylist && <PlaylistRows items={playlistOpen ? playlistItems : playlistPreview} preview={!playlistOpen} />}
     <Handle id="bottom" className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="source" position={Position.Bottom} isConnectableStart isConnectableEnd style={{ left: '50%', transform: 'translateX(-50%)' }} />
