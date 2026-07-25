@@ -17,10 +17,10 @@ const clipboardMediaExtensions: Record<string, string> = {
   'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
   'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/x-m4v': 'm4v',
 }
-const toFlowNode = (node: MemoryNode, onOpenMedia: (assets: Asset[], index: number) => void, onObjectChange?: (patch: Partial<MemoryNode>) => void): FlowMemoryNode => ({
+const toFlowNode = (node: MemoryNode, onOpenMedia: (assets: Asset[], index: number) => void, onObjectChange?: (patch: Partial<MemoryNode>) => void, onPlaylistToggle?: (id: number) => void): FlowMemoryNode => ({
   id: String(node.id), type: 'memory', position: { x: node.position_x, y: node.position_y },
   style: { width: node.width ?? defaultNodeWidth(node), height: node.height ?? defaultNodeHeight(node), zIndex: node.z_index },
-  data: { ...node, onOpenMedia, onObjectChange },
+  data: { ...node, onOpenMedia, onObjectChange, onPlaylistToggle: onPlaylistToggle ? () => onPlaylistToggle(node.id) : undefined },
 })
 const toFlowEdge = (edge: MemoryEdge): Edge => ({
   id: String(edge.id), type: 'memory', source: String(edge.source_node_id), sourceHandle: edge.source_handle || 'right', target: String(edge.target_node_id), targetHandle: edge.target_handle || 'left', label: edge.label || undefined,
@@ -67,13 +67,16 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   const objectSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const objectSyncPatchesRef = useRef<Record<string, Partial<MemoryNode>>>({})
   const objectChange = useCallback((id: number, patch: Partial<MemoryNode>) => objectChangeRef.current(String(id), patch), [])
+  const togglePlaylistOpen = useCallback((id: number) => {
+    setNodes(current => current.map(node => node.id === String(id) ? { ...node, data: { ...node.data, playlistOpen: !node.data.playlistOpen } } : node))
+  }, [setNodes])
 
   const openMedia = useCallback((assets: Asset[], index: number) => setLightbox({ assets, index }), [])
   const load = useCallback(async () => {
     try {
       const next = await api.board(boardId)
       setBoard(next)
-      setNodes(next.nodes.map(node => toFlowNode(node, openMedia, patch => objectChange(node.id, patch))))
+      setNodes(next.nodes.map(node => toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen)))
       setEdges(next.edges.map(toFlowEdge))
       const datedNodes = next.nodes.filter(node => node.temporal_date).sort((left, right) => (left.temporal_date || '').localeCompare(right.temporal_date || '') || left.id - right.id)
       const focusNode = datedNodes[0] || next.nodes[0]
@@ -81,7 +84,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Не удалось загрузить холст')
     } finally { setLoading(false) }
-  }, [boardId, openMedia, setEdges, setNodes])
+  }, [boardId, openMedia, setEdges, setNodes, togglePlaylistOpen])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -179,11 +182,11 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
     setBoard(current => current ? { ...current, nodes: current.nodes.map(node => node.id === numericId ? { ...node, ...patch } : node) } : current)
     setSelected(current => current?.id === numericId ? { ...current, ...patch } : current)
     const previous = objectSyncPatchesRef.current[id]
-    objectSyncPatchesRef.current[id] = {
-      ...previous,
-      ...patch,
-      object_data: patch.object_data ? { ...(previous?.object_data || {}), ...patch.object_data } : previous?.object_data,
-    }
+    const pending = { ...previous, ...patch }
+    if (patch.object_data) pending.object_data = { ...(previous?.object_data || {}), ...patch.object_data }
+    else if (previous?.object_data) pending.object_data = previous.object_data
+    else delete pending.object_data
+    objectSyncPatchesRef.current[id] = pending
     clearTimeout(objectSyncTimersRef.current[id])
     objectSyncTimersRef.current[id] = setTimeout(() => {
       const pending = objectSyncPatchesRef.current[id]
@@ -266,7 +269,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
         track_data: type === 'track' ? source?.track_data || { title: '', artist: '', kind: 'track', cover_size: 'small', playlist_items: [], collapsed_item_limit: 3, show_timeline: false, duration_seconds: 0, hide_details: false } : undefined,
         object_data: source?.object_data ?? (type === 'canvas_text' ? { text: 'Текст', font_size: 42, font_family: "Inter, 'Segoe UI', Arial, sans-serif", color: '#f7f2ff' } : undefined),
       })
-      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch)), selected: true }])
+      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen), selected: true }])
       setBoard(current => current ? { ...current, nodes: [...current.nodes, node] } : current)
       selectionRef.current = [node.id]
       setSelected(node); setSelectedIds([node.id])
@@ -363,7 +366,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
     if ((source.type !== 'media' && source.type !== 'canvas_image') || !board) return create(source.type, { x: source.position_x + 40, y: source.position_y + 40 }, source)
     try {
       const node = await api.duplicateMediaNode(source.id, { position_x: source.position_x + 40, position_y: source.position_y + 40, z_index: Math.max(0, ...nodes.map(item => item.data.z_index)) + 1 })
-      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch)), selected: true }])
+      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen), selected: true }])
       setBoard(current => current ? { ...current, nodes: [...current.nodes, node] } : current)
       selectionRef.current = [node.id]
       setSelected(node); setSelectedIds([node.id])
@@ -408,7 +411,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   const closeEditor = () => {
     if (selected && board) {
       const persisted = board.nodes.find(node => node.id === selected.id)
-      if (persisted) setNodes(current => current.map(node => node.id === String(persisted.id) ? { ...node, data: { ...persisted, onOpenMedia: openMedia } } : node))
+      if (persisted) setNodes(current => current.map(node => node.id === String(persisted.id) ? { ...node, data: { ...node.data, ...persisted, onOpenMedia: openMedia } } : node))
     }
     setSelected(null)
   }
