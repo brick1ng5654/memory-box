@@ -67,6 +67,12 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   const objectSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const objectSyncPatchesRef = useRef<Record<string, Partial<MemoryNode>>>({})
   const objectChange = useCallback((id: number, patch: Partial<MemoryNode>) => objectChangeRef.current(String(id), patch), [])
+  const previewTextFont = useCallback((id: number, fontFamily: string | null) => {
+    setNodes(current => current.map(node => node.id === String(id) ? {
+      ...node,
+      data: { ...node.data, previewObjectData: fontFamily ? { ...(node.data.object_data || {}), font_family: fontFamily } : undefined },
+    } : node))
+  }, [setNodes])
   const togglePlaylistOpen = useCallback((id: number) => {
     setNodes(current => current.map(node => node.id === String(id) ? { ...node, data: { ...node.data, playlistOpen: !node.data.playlistOpen } } : node))
   }, [setNodes])
@@ -436,7 +442,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
       </ReactFlow>
       <div className="timeline"><span>{formatPeriod(board)}</span><div className="timeline-scroll" onWheel={event => { if (event.deltaY) { event.currentTarget.scrollLeft += event.deltaY; event.preventDefault() } }}><div className="timeline-days">{days.map(date => { const datedNodes = board.nodes.filter(node => node.temporal_date === date); const bookmarks = datedNodes.length < 2 ? [] : datedNodes.filter((_, index) => index % 2 === 0).slice(0, 5); const day = Number(date.slice(8)); return <i key={date}><b className="timeline-bookmarks">{bookmarks.map((node, index) => <em key={node.id} className={`timeline-bookmark ${node.type}`} style={{ bottom: index * 9 }} title={node.title || node.track_data?.title || 'Воспоминание'} />)}</b><small>{day}</small></i> })}</div></div></div>
     </section>
-    {selected && ['note', 'media', 'track', 'canvas_text', 'canvas_image'].includes(selected.type) && <Editor node={selected} boardStartDate={board.start_date} boardEndDate={board.end_date} onClose={closeEditor} onSave={save} onRequestDelete={() => setDeleteDialog(true)} onDeleteAsset={removeAsset} onUpdateAsset={updateAsset} onReorderAssets={reorderAssets} onPreview={preview} onTextChange={object_data => objectChange(selected.id, { object_data })} onCreate={create} />}
+    {selected && ['note', 'media', 'track', 'canvas_text', 'canvas_image'].includes(selected.type) && <Editor node={selected} boardStartDate={board.start_date} boardEndDate={board.end_date} onClose={closeEditor} onSave={save} onRequestDelete={() => setDeleteDialog(true)} onDeleteAsset={removeAsset} onUpdateAsset={updateAsset} onReorderAssets={reorderAssets} onPreview={preview} onTextChange={object_data => objectChange(selected.id, { object_data })} onTextPreview={fontFamily => previewTextFont(selected.id, fontFamily)} onCreate={create} />}
     {contextMenu && <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}>
       {contextMenu.edgeIds?.length ? <><p>{contextMenu.edgeIds.length > 1 ? 'Связи' : 'Связь'}</p><button className="context-danger" onClick={() => { void onEdgesDelete(edges.filter(edge => contextMenu.edgeIds?.includes(Number(edge.id)))); setContextMenu(null) }}>Удалить {contextMenu.edgeIds.length > 1 ? 'связи' : 'связь'}</button></>
         : contextMenu.nodeIds && contextMenu.nodeIds.length > 1 ? <><p>Выбрано: {contextMenu.nodeIds.length}</p><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'front'); setContextMenu(null) }}>На передний план</button><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'back'); setContextMenu(null) }}>На задний план</button><button className="context-danger" onClick={() => { setDeleteDialog(true); setContextMenu(null) }}>Удалить выбранные</button></>

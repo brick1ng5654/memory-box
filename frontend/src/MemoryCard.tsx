@@ -13,7 +13,7 @@ const resizeLimits = (type: MemoryNode['type'], isPlaylist: boolean, largeCover:
   if (type === 'note') return { minWidth: 120, minHeight: 80 }
   return { minWidth: isPlaylist && largeCover ? 180 : 150, minHeight: isPlaylist && largeCover ? 180 : largeCover ? 170 : 110 }
 }
-export type FlowData = MemoryNode & { onOpenMedia?: (assets: Asset[], index: number) => void; onObjectChange?: (patch: Partial<MemoryNode>) => void; onPlaylistToggle?: () => void; playlistOpen?: boolean; isConnecting?: boolean } & Record<string, unknown>
+export type FlowData = MemoryNode & { onOpenMedia?: (assets: Asset[], index: number) => void; onObjectChange?: (patch: Partial<MemoryNode>) => void; onPlaylistToggle?: () => void; playlistOpen?: boolean; isConnecting?: boolean; previewObjectData?: CanvasObjectData } & Record<string, unknown>
 export type FlowMemoryNode = Node<FlowData, 'memory'>
 
 function MediaTile({ asset, index, assets, onOpen }: { asset: Asset; index: number; assets: Asset[]; onOpen?: (assets: Asset[], index: number) => void }) {
@@ -77,20 +77,46 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
 }
 
 function CanvasObject({ node, selected, resizeLimit }: { node: FlowData; selected: boolean; resizeLimit: { minWidth: number; minHeight: number } }) {
-  const data = node.object_data || {}
+  const data = node.previewObjectData || node.object_data || {}
   const hasText = node.type === 'canvas_text' && Boolean(data.text?.trim())
   return <div className={`canvas-object ${node.type} ${hasText ? 'has-text' : ''} ${selected ? 'selected' : ''}`}>
-    <NodeResizer isVisible={selected} {...resizeLimit} maxWidth={2400} maxHeight={1800} lineClassName="resize-line" handleClassName="resize-handle" onResizeEnd={(_, params) => node.onObjectChange?.({ width: params.width, height: params.height, position_x: params.x, position_y: params.y })} />
     <div className="object-drag-handle" title="Перетащить объект" />
     {node.type === 'canvas_text' && <CanvasText data={data} onChange={node.onObjectChange} />}
     {node.type === 'canvas_image' && <CanvasImage assets={node.media_assets} data={data} />}
+    <NodeResizer isVisible={selected} {...resizeLimit} maxWidth={2400} maxHeight={1800} lineClassName="resize-line" handleClassName="resize-handle" onResizeEnd={(_, params) => node.onObjectChange?.({ width: params.width, height: params.height, position_x: params.x, position_y: params.y })} />
   </div>
 }
 
 function CanvasText({ data, onChange }: { data: CanvasObjectData; onChange?: (patch: Partial<MemoryNode>) => void }) {
-  const update = (text: string) => onChange?.({ object_data: { ...data, text } })
+  const textRef = useRef<HTMLTextAreaElement>(null)
+  const dataRef = useRef(data)
+  const onChangeRef = useRef(onChange)
+  const pendingTextRef = useRef<string | null>(null)
+
+  useEffect(() => { dataRef.current = data }, [data])
+  useEffect(() => { onChangeRef.current = onChange }, [onChange])
+  useEffect(() => {
+    const element = textRef.current
+    // During an editing session the browser owns the text. Writing it back
+    // from React can restore an older value and disrupt the caret.
+    if (!element || document.activeElement === element) return
+    const text = data.text || ''
+    if (element.value !== text) element.value = text
+  }, [data.text])
+
+  const flush = () => {
+    const text = pendingTextRef.current
+    if (text === null) return
+    pendingTextRef.current = null
+    onChangeRef.current?.({ object_data: { ...dataRef.current, text } })
+  }
+
+  const update = (text: string) => {
+    dataRef.current = { ...dataRef.current, text }
+    pendingTextRef.current = text
+  }
   return <div className="canvas-text-wrap" style={{ transform: `rotate(${data.rotation || 0}deg)` }}>
-    <div className="canvas-text nodrag" contentEditable suppressContentEditableWarning spellCheck={false} style={{ fontSize: data.font_size || 42, fontFamily: data.font_family || "Inter, 'Segoe UI', Arial, sans-serif", fontWeight: data.font_weight ? 800 : 500, fontStyle: data.font_style ? 'italic' : 'normal', textAlign: data.text_align || 'left', color: data.color || '#f7f2ff' }} onInput={event => update(event.currentTarget.textContent || '')}>{data.text || ''}</div>
+    <textarea ref={textRef} className="canvas-text nodrag" defaultValue={data.text || ''} wrap="soft" spellCheck={false} style={{ fontSize: data.font_size || 42, fontFamily: data.font_family || "Inter, 'Segoe UI', Arial, sans-serif", fontWeight: data.font_weight ? 800 : 500, fontStyle: data.font_style ? 'italic' : 'normal', textAlign: data.text_align || 'left', color: data.color || '#f7f2ff' }} onChange={event => update(event.currentTarget.value)} onBlur={flush} />
   </div>
 }
 
