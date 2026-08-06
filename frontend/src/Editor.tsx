@@ -5,7 +5,7 @@ type Props = {
   node: MemoryNode | null; boardStartDate: string; boardEndDate: string; onClose: () => void
   onSave: (data: Partial<MemoryNode>, files?: File[]) => Promise<void>; onRequestDelete: () => void
   onDeleteAsset: (asset: Asset) => Promise<void>; onUpdateAsset: (asset: Asset, patch: Partial<Pick<Asset, 'is_favorite' | 'sort_order'>>) => Promise<void>
-  onReorderAssets: (assets: Asset[]) => Promise<void>; onPreview: (data: Partial<MemoryNode>) => void; onTextChange: (data: CanvasObjectData) => void; onCreate: (type: NodeType) => void
+  onReorderAssets: (assets: Asset[]) => Promise<void>; onPreview: (data: Partial<MemoryNode>) => void; onTextChange: (data: CanvasObjectData) => void; onTextPreview: (fontFamily: string | null) => void; onCreate: (type: NodeType) => void
 }
 
 const emptyTrack: Track = { title: '', artist: '', kind: 'track', cover_size: 'small', playlist_items: [], collapsed_item_limit: 3, show_timeline: false, duration_seconds: 0, hide_details: false }
@@ -14,8 +14,16 @@ const parseDuration = (value: string) => {
   const match = value.trim().match(/^(\d+):([0-5]\d)$/)
   return match ? Number(match[1]) * 60 + Number(match[2]) : null
 }
+const fontOptions = [
+  { value: "Inter, 'Segoe UI', Arial, sans-serif", label: 'Интер / системный' }, { value: "'Segoe UI', Arial, sans-serif", label: 'Segoe UI' },
+  { value: 'Arial, Helvetica, sans-serif', label: 'Arial' }, { value: 'Verdana, Geneva, sans-serif', label: 'Verdana' },
+  { value: "Georgia, 'Times New Roman', serif", label: 'Georgia' }, { value: "'Times New Roman', Times, serif", label: 'Times New Roman' },
+  { value: "'Courier New', Courier, monospace", label: 'Courier New' }, { value: "'Neucha', cursive", label: 'Neucha' },
+  { value: "'Yeseva One', serif", label: 'Yeseva One' }, { value: "'Comfortaa', sans-serif", label: 'Comfortaa' },
+  { value: "'Unbounded', sans-serif", label: 'Unbounded' }, { value: "'Rubik Mono One', monospace", label: 'Rubik Mono One' },
+]
 
-export default function Editor({ node, boardStartDate, boardEndDate, onClose, onSave, onRequestDelete, onDeleteAsset, onUpdateAsset, onReorderAssets, onPreview, onTextChange }: Props) {
+export default function Editor({ node, boardStartDate, boardEndDate, onClose, onSave, onRequestDelete, onDeleteAsset, onUpdateAsset, onReorderAssets, onPreview, onTextChange, onTextPreview }: Props) {
   const [draft, setDraft] = useState<Partial<MemoryNode>>({})
   const [files, setFiles] = useState<File[]>([])
   const [busy, setBusy] = useState(false)
@@ -30,12 +38,14 @@ export default function Editor({ node, boardStartDate, boardEndDate, onClose, on
   const [spotifySearching, setSpotifySearching] = useState(false)
   const [durationText, setDurationText] = useState('0:00')
   const [fontSizeInput, setFontSizeInput] = useState('42')
+  const [fontMenuOpen, setFontMenuOpen] = useState(false)
   const trackSaveQueue = useRef(Promise.resolve())
 
   useEffect(() => {
     setDraft(node ? { ...node, track_data: node.track_data ? { ...emptyTrack, ...node.track_data, playlist_items: node.track_data.playlist_items.map(item => ({ ...item, is_favorite: item.is_favorite ?? false })) } : undefined } : {})
     setDurationText(formatDuration(node?.track_data?.duration_seconds ?? 0))
     setFontSizeInput(String(node?.object_data?.font_size ?? 42))
+    setFontMenuOpen(false)
     setFiles([]); setError(''); setSpotifyQuery(''); setSpotifyResults([]); setSpotifyError('')
   }, [node?.id])
   useEffect(() => {
@@ -88,7 +98,7 @@ export default function Editor({ node, boardStartDate, boardEndDate, onClose, on
       <button className="close" onClick={() => void save(true)}>×</button><p className="eyebrow">Текст на холсте</p><h2>Оформление текста</h2>
       <label>Текст<textarea value={text.text || ''} spellCheck={false} onChange={event => updateText({ text: event.target.value })} rows={5} /></label>
       <label>Размер<input type="number" min="12" max="240" value={fontSizeInput} onChange={event => setFontSizeInput(event.target.value)} onBlur={() => { const size = Number(fontSizeInput); if (Number.isFinite(size) && size >= 12 && size <= 240) updateText({ font_size: size }); else setFontSizeInput(String(text.font_size || 42)) }} /></label>
-      <label>Шрифт<select value={text.font_family || "Inter, 'Segoe UI', Arial, sans-serif"} onChange={event => updateText({ font_family: event.target.value })}><option value="Inter, 'Segoe UI', Arial, sans-serif">Интер / системный</option><option value="'Segoe UI', Arial, sans-serif">Segoe UI</option><option value="Arial, Helvetica, sans-serif">Arial</option><option value="Verdana, Geneva, sans-serif">Verdana</option><option value="Georgia, 'Times New Roman', serif">Georgia</option><option value="'Times New Roman', Times, serif">Times New Roman</option><option value="'Courier New', Courier, monospace">Courier New</option><option value="'Neucha', cursive">Neucha</option><option value="'Yeseva One', serif">Yeseva One</option><option value="'Comfortaa', sans-serif">Comfortaa</option><option value="'Unbounded', sans-serif">Unbounded</option><option value="'Rubik Mono One', monospace">Rubik Mono One</option></select></label>
+      <label>Шрифт<div className="font-picker" onMouseLeave={() => onTextPreview(null)}><button type="button" className="font-picker-trigger" onClick={() => { onTextPreview(null); setFontMenuOpen(open => !open) }}>{fontOptions.find(option => option.value === (text.font_family || "Inter, 'Segoe UI', Arial, sans-serif"))?.label || 'Выбрать шрифт'}</button>{fontMenuOpen && <div className="font-picker-menu" role="listbox">{fontOptions.map(option => <button key={option.value} type="button" className={option.value === (text.font_family || "Inter, 'Segoe UI', Arial, sans-serif") ? 'active' : ''} style={{ fontFamily: option.value }} onMouseEnter={() => onTextPreview(option.value)} onFocus={() => onTextPreview(option.value)} onClick={() => { updateText({ font_family: option.value }); onTextPreview(null); setFontMenuOpen(false) }}>{option.label}</button>)}</div>}</div></label>
       <label className="toggle-label"><input type="checkbox" checked={text.font_weight || false} onChange={event => updateText({ font_weight: event.target.checked })} />Жирный</label>
       <label className="toggle-label"><input type="checkbox" checked={text.font_style || false} onChange={event => updateText({ font_style: event.target.checked })} />Курсив</label>
       <label>Выравнивание<select value={text.text_align || 'left'} onChange={event => updateText({ text_align: event.target.value as CanvasObjectData['text_align'] })}><option value="left">Слева</option><option value="center">По центру</option><option value="right">Справа</option><option value="justify">По ширине</option></select></label>
