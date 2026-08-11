@@ -41,6 +41,7 @@ export default function Editor({ node, boardStartDate, boardEndDate, theme, onCl
   const [fontSizeInput, setFontSizeInput] = useState('42')
   const [fontMenuOpen, setFontMenuOpen] = useState(false)
   const [editorTextValue, setEditorTextValue] = useState('')
+  const [rotationInput, setRotationInput] = useState('0')
   const trackSaveQueue = useRef(Promise.resolve())
   const editorObjectDataRef = useRef<CanvasObjectData | null>(null)
 
@@ -50,6 +51,7 @@ export default function Editor({ node, boardStartDate, boardEndDate, theme, onCl
     setDurationText(formatDuration(node?.track_data?.duration_seconds ?? 0))
     setFontSizeInput(String(node?.object_data?.font_size ?? 42))
     setEditorTextValue(node?.object_data?.text || '')
+    setRotationInput(String(Math.round(node?.object_data?.rotation ?? 0)))
     setFontMenuOpen(false)
     setFiles([]); setError(''); setSpotifyQuery(''); setSpotifyResults([]); setSpotifyError('')
   }, [node?.id])
@@ -135,14 +137,27 @@ export default function Editor({ node, boardStartDate, boardEndDate, theme, onCl
   }
   if (node.type === 'canvas_image') {
     const image = draft.object_data || {}
-    const updateImage = (rotation: number) => {
-      const next = { ...image, rotation }
+    const rotation = Math.max(-180, Math.min(180, Math.round(image.rotation ?? 0)))
+    const updateImage = (patch: Partial<CanvasObjectData>) => {
+      const next = { ...image, ...patch }
       updateDraft({ object_data: next })
       onTextChange(next)
     }
+    const setRotation = (value: number) => {
+      const nextRotation = Math.max(-180, Math.min(180, Math.round(value)))
+      setRotationInput(String(nextRotation))
+      updateImage({ rotation: nextRotation })
+    }
+    const commitRotation = () => {
+      const value = Number(rotationInput)
+      if (Number.isInteger(value)) setRotation(value)
+      else setRotationInput(String(rotation))
+    }
     return <aside className="editor" onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
       <button className="close" onClick={() => void save(true)}>×</button><p className="eyebrow">Изображение на холсте</p><h2>Оформление изображения</h2>
-      <label>Поворот<input type="range" min="-180" max="180" step="1" value={image.rotation || 0} onChange={event => updateImage(Number(event.target.value))} /><span className="range-value">{image.rotation || 0}°</span></label>
+      <label>Поворот<input type="range" min="-180" max="180" step="1" value={rotation} onChange={event => setRotation(Number(event.target.value))} /></label>
+      <label>Угол<input type="text" inputMode="numeric" value={rotationInput} onChange={event => { const value = event.target.value; if (/^-?\d*$/.test(value)) setRotationInput(value) }} onBlur={commitRotation} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commitRotation(); event.currentTarget.blur() } }} /></label>
+      <div className="image-transform-actions"><button type="button" onClick={() => updateImage({ flip_x: !image.flip_x })}>Отразить по горизонтали</button><button type="button" onClick={() => updateImage({ flip_y: !image.flip_y })}>Отразить по вертикали</button></div>
       {error && <p className="error">{error}</p>}<div className="editor-actions"><button className="danger" onClick={onRequestDelete}>Удалить</button>{busy && <span className="saving">Сохраняю…</span>}</div>
     </aside>
   }
