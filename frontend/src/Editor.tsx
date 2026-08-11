@@ -40,18 +40,27 @@ export default function Editor({ node, boardStartDate, boardEndDate, theme, onCl
   const [durationText, setDurationText] = useState('0:00')
   const [fontSizeInput, setFontSizeInput] = useState('42')
   const [fontMenuOpen, setFontMenuOpen] = useState(false)
+  const [editorTextValue, setEditorTextValue] = useState('')
   const trackSaveQueue = useRef(Promise.resolve())
+  const editorObjectDataRef = useRef<CanvasObjectData | null>(null)
 
   useEffect(() => {
+    editorObjectDataRef.current = null
     setDraft(node ? { ...node, track_data: node.track_data ? { ...emptyTrack, ...node.track_data, playlist_items: node.track_data.playlist_items.map(item => ({ ...item, is_favorite: item.is_favorite ?? false })) } : undefined } : {})
     setDurationText(formatDuration(node?.track_data?.duration_seconds ?? 0))
     setFontSizeInput(String(node?.object_data?.font_size ?? 42))
+    setEditorTextValue(node?.object_data?.text || '')
     setFontMenuOpen(false)
     setFiles([]); setError(''); setSpotifyQuery(''); setSpotifyResults([]); setSpotifyError('')
   }, [node?.id])
   useEffect(() => {
     if (node?.type !== 'canvas_text') return
+    if (editorObjectDataRef.current && JSON.stringify(editorObjectDataRef.current) === JSON.stringify(node.object_data || {})) {
+      editorObjectDataRef.current = null
+      return
+    }
     setDraft(current => ({ ...current, object_data: node.object_data ? { ...node.object_data } : {} }))
+    setEditorTextValue(node.object_data?.text || '')
     setFontSizeInput(String(node.object_data?.font_size ?? 42))
   }, [node?.id, node?.object_data])
   useEffect(() => {
@@ -84,7 +93,7 @@ export default function Editor({ node, boardStartDate, boardEndDate, theme, onCl
     setDurationText(formatDuration(result.duration_seconds))
     setSpotifyQuery(''); setSpotifyResults([]); setSpotifyError('')
   }
-  const save = async (closeAfter = false) => { if (busy) return; setBusy(true); setError(''); try { await trackSaveQueue.current; await onSave(draft, files); setFiles([]); if (closeAfter) onClose() } catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'Ошибка сохранения') } finally { setBusy(false) } }
+  const save = async (closeAfter = false) => { if (busy) return; setBusy(true); setError(''); try { await trackSaveQueue.current; const savedDraft = node?.type === 'canvas_text' ? { ...draft, object_data: { ...(draft.object_data || {}), text: editorTextValue } } : draft; await onSave(savedDraft, files); setFiles([]); if (closeAfter) onClose() } catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'Ошибка сохранения') } finally { setBusy(false) } }
   const reorderFromDrag = async (targetId: number) => { if (!node || draggedAssetId === null || draggedAssetId === targetId) return; const items = [...node.media_assets]; const from = items.findIndex(asset => asset.id === draggedAssetId); const to = items.findIndex(asset => asset.id === targetId); if (from < 0 || to < 0) return; const [item] = items.splice(from, 1); items.splice(to, 0, item); setDraggedAssetId(null); setDropTargetId(null); await onReorderAssets(items) }
   if (!node) return null
   if (node.type === 'canvas_text') {
@@ -93,13 +102,27 @@ export default function Editor({ node, boardStartDate, boardEndDate, theme, onCl
     const normalizedTextColor = text.color?.trim().toLowerCase()
     const colorInputValue = !normalizedTextColor || ['#fff', '#ffffff', 'white', '#000', '#000000', 'black'].includes(normalizedTextColor) ? defaultTextColor : text.color
     const updateText = (patch: Partial<CanvasObjectData>) => {
-      const next = { ...(draft.object_data || {}), ...patch }
-      updateDraft({ object_data: next })
+      const next = { ...(draft.object_data || {}), text: editorTextValue, ...patch }
+      if ('text' in patch) {
+        setEditorTextValue(next.text || '')
+        return
+      }
+      editorObjectDataRef.current = next
+      setDraft(current => ({ ...current, object_data: next }))
+      onPreview({ object_data: next })
+      onTextChange(next)
+    }
+    const flushText = () => {
+      if (text.text === editorTextValue) return
+      const next = { ...text, text: editorTextValue }
+      editorObjectDataRef.current = next
+      setDraft(current => ({ ...current, object_data: next }))
+      onPreview({ object_data: next })
       onTextChange(next)
     }
     return <aside className="editor" onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
       <button className="close" onClick={() => void save(true)}>×</button><p className="eyebrow">Текст на холсте</p><h2>Оформление текста</h2>
-      <label>Текст<textarea value={text.text || ''} spellCheck={false} onChange={event => updateText({ text: event.target.value })} rows={5} /></label>
+      <label>Текст<textarea value={editorTextValue} spellCheck={false} onChange={event => updateText({ text: event.target.value })} onBlur={flushText} rows={5} /></label>
       <label>Размер<input type="number" min="12" max="240" value={fontSizeInput} onChange={event => setFontSizeInput(event.target.value)} onBlur={() => { const size = Number(fontSizeInput); if (Number.isFinite(size) && size >= 12 && size <= 240) updateText({ font_size: size }); else setFontSizeInput(String(text.font_size || 42)) }} /></label>
       <label>Шрифт<div className="font-picker" onMouseLeave={() => onTextPreview(null)}><button type="button" className="font-picker-trigger" onClick={() => { onTextPreview(null); setFontMenuOpen(open => !open) }}>{fontOptions.find(option => option.value === (text.font_family || "Inter, 'Segoe UI', Arial, sans-serif"))?.label || 'Выбрать шрифт'}</button>{fontMenuOpen && <div className="font-picker-menu" role="listbox">{fontOptions.map(option => <button key={option.value} type="button" className={option.value === (text.font_family || "Inter, 'Segoe UI', Arial, sans-serif") ? 'active' : ''} style={{ fontFamily: option.value }} onMouseEnter={() => onTextPreview(option.value)} onFocus={() => onTextPreview(option.value)} onClick={() => { updateText({ font_family: option.value }); onTextPreview(null); setFontMenuOpen(false) }}>{option.label}</button>)}</div>}</div></label>
       <label className="toggle-label"><input type="checkbox" checked={text.font_weight || false} onChange={event => updateText({ font_weight: event.target.checked })} />Жирный</label>
