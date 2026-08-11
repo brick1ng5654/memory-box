@@ -17,10 +17,12 @@ const clipboardMediaExtensions: Record<string, string> = {
   'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
   'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/x-m4v': 'm4v',
 }
-const toFlowNode = (node: MemoryNode, onOpenMedia: (assets: Asset[], index: number) => void, onObjectChange?: (patch: Partial<MemoryNode>) => void, onPlaylistToggle?: (id: number) => void): FlowMemoryNode => ({
+type Theme = 'dark' | 'light'
+
+const toFlowNode = (node: MemoryNode, onOpenMedia: (assets: Asset[], index: number) => void, onObjectChange?: (patch: Partial<MemoryNode>) => void, onPlaylistToggle?: (id: number) => void, theme: Theme = 'dark'): FlowMemoryNode => ({
   id: String(node.id), type: 'memory', position: { x: node.position_x, y: node.position_y },
   style: { width: node.width ?? defaultNodeWidth(node), height: node.height ?? defaultNodeHeight(node), zIndex: node.z_index },
-  data: { ...node, onOpenMedia, onObjectChange, onPlaylistToggle: onPlaylistToggle ? () => onPlaylistToggle(node.id) : undefined },
+  data: { ...node, onOpenMedia, onObjectChange, onPlaylistToggle: onPlaylistToggle ? () => onPlaylistToggle(node.id) : undefined, theme },
 })
 const toFlowEdge = (edge: MemoryEdge): Edge => ({
   id: String(edge.id), type: 'memory', source: String(edge.source_node_id), sourceHandle: edge.source_handle || 'right', target: String(edge.target_node_id), targetHandle: edge.target_handle || 'left', label: edge.label || undefined,
@@ -34,7 +36,7 @@ function MemoryBezierEdge({ id, sourceX, sourceY, sourcePosition, targetX, targe
 
 const edgeTypes = { memory: MemoryBezierEdge }
 
-function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void }) {
+function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: number; onHome: () => void; theme: Theme; onToggleTheme: () => void }) {
   const { screenToFlowPosition, setCenter } = useReactFlow()
   const [board, setBoard] = useState<Board | null>(null)
   const [nodes, setNodes] = useNodesState<FlowMemoryNode>([])
@@ -66,6 +68,8 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   const objectChangeRef = useRef<(id: string, patch: Partial<MemoryNode>) => void>(() => {})
   const objectSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const objectSyncPatchesRef = useRef<Record<string, Partial<MemoryNode>>>({})
+  const themeRef = useRef(theme)
+  themeRef.current = theme
   const objectChange = useCallback((id: number, patch: Partial<MemoryNode>) => objectChangeRef.current(String(id), patch), [])
   const previewTextFont = useCallback((id: number, fontFamily: string | null) => {
     setNodes(current => current.map(node => node.id === String(id) ? {
@@ -82,7 +86,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
     try {
       const next = await api.board(boardId)
       setBoard(next)
-      setNodes(next.nodes.map(node => toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen)))
+      setNodes(next.nodes.map(node => toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen, themeRef.current)))
       setEdges(next.edges.map(toFlowEdge))
       const datedNodes = next.nodes.filter(node => node.temporal_date).sort((left, right) => (left.temporal_date || '').localeCompare(right.temporal_date || '') || left.id - right.id)
       const focusNode = datedNodes[0] || next.nodes[0]
@@ -93,6 +97,9 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   }, [boardId, openMedia, setEdges, setNodes, togglePlaylistOpen])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => {
+    setNodes(current => current.map(node => ({ ...node, data: { ...node.data, theme } })))
+  }, [setNodes, theme])
   useEffect(() => {
     if (loading || !initialFocus) return
     const frame = requestAnimationFrame(() => { zoomRef.current = 0.85; setZoom(0.85); void setCenter(initialFocus.x, initialFocus.y, { zoom: 0.85, duration: 0 }) })
@@ -273,9 +280,9 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
         temporal_date: source?.temporal_date,
         show_date: source?.show_date ?? true, show_type_label: source?.show_type_label ?? false, date_position: source?.date_position ?? 'bottom-center', title_position: source?.title_position ?? 'bottom-center',
         track_data: type === 'track' ? source?.track_data || { title: '', artist: '', kind: 'track', cover_size: 'small', playlist_items: [], collapsed_item_limit: 3, show_timeline: false, duration_seconds: 0, hide_details: false } : undefined,
-        object_data: source?.object_data ?? (type === 'canvas_text' ? { text: 'Текст', font_size: 42, font_family: "Inter, 'Segoe UI', Arial, sans-serif", color: '#f7f2ff' } : undefined),
+        object_data: source?.object_data ?? (type === 'canvas_text' ? { text: 'Текст', font_size: 42, font_family: "Inter, 'Segoe UI', Arial, sans-serif" } : undefined),
       })
-      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen), selected: true }])
+      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen, theme), selected: true }])
       setBoard(current => current ? { ...current, nodes: [...current.nodes, node] } : current)
       selectionRef.current = [node.id]
       setSelected(node); setSelectedIds([node.id])
@@ -372,7 +379,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
     if ((source.type !== 'media' && source.type !== 'canvas_image') || !board) return create(source.type, { x: source.position_x + 40, y: source.position_y + 40 }, source)
     try {
       const node = await api.duplicateMediaNode(source.id, { position_x: source.position_x + 40, position_y: source.position_y + 40, z_index: Math.max(0, ...nodes.map(item => item.data.z_index)) + 1 })
-      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen), selected: true }])
+      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen, theme), selected: true }])
       setBoard(current => current ? { ...current, nodes: [...current.nodes, node] } : current)
       selectionRef.current = [node.id]
       setSelected(node); setSelectedIds([node.id])
@@ -432,17 +439,17 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   const activeAsset = lightbox?.assets[lightbox.index]
   const dotSize = Math.min(9, Math.max(1.35, 1.7 / zoom))
 
-  return <main className="app" onClick={() => setContextMenu(null)}>
-    <header><div><input aria-label="Название доски" value={board.title} onChange={event => setBoard({ ...board, title: event.target.value })} onBlur={async () => { try { await api.renameBoard(board.id, board.title) } catch { setNotice('Не удалось сохранить название') } }} /></div><button className="boards-link" onClick={onHome}>Все доски</button></header>
+  return <main className={`app theme-${theme}`} onClick={() => setContextMenu(null)}>
+    <header><div><input aria-label="Название доски" value={board.title} onChange={event => setBoard({ ...board, title: event.target.value })} onBlur={async () => { try { await api.renameBoard(board.id, board.title) } catch { setNotice('Не удалось сохранить название') } }} /></div><div className="header-actions"><button className="theme-toggle" onClick={onToggleTheme} aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}>{theme === 'dark' ? '☀' : '☾'}</button><button className="boards-link" onClick={onHome}>Все доски</button></div></header>
     {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
     <input ref={imageInputRef} className="visually-hidden" type="file" accept="image/png,.png" onChange={event => { const file = event.target.files?.[0]; const position = pendingImagePositionRef.current; event.currentTarget.value = ''; if (file && position) void createPng(file, position) }} />
     <section ref={canvasRef} className="canvas-wrap" onPointerMoveCapture={event => { canvasPointerRef.current = { x: event.clientX, y: event.clientY } }} onMouseDownCapture={event => { if (event.button === 2) contextSelectionRef.current = { nodeIds: nodes.filter(node => node.selected).map(node => Number(node.id)), edgeIds: edges.filter(edge => edge.selected).map(edge => Number(edge.id)) } }} onContextMenuCapture={event => { const target = event.target as HTMLElement; const nodeElement = target.closest<HTMLElement>('.react-flow__node'); const edgeElement = target.closest<HTMLElement>('.react-flow__edge'); const nodeId = Number(nodeElement?.dataset.id); const edgeId = Number(edgeElement?.dataset.id); openContextMenu(event, Number.isFinite(nodeId) ? nodeId : undefined, Number.isFinite(edgeId) ? [edgeId] : undefined) }}>
       <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onSelectionChange={onSelectionChange} onNodeClick={(_, node) => { setSelected(node.data); setSelectedIds([Number(node.id)]); setSelectedEdgeIds([]) }} onEdgeClick={(_, edge) => { setSelectedEdgeIds([Number(edge.id)]); setSelected(null); setSelectedIds([]) }} onNodeContextMenu={(event, node) => openContextMenu(event, Number(node.id))} onEdgeContextMenu={(event, edge) => { const id = Number(edge.id); openContextMenu(event, undefined, selectedEdgeIds.length > 1 && selectedEdgeIds.includes(id) ? selectedEdgeIds : [id]) }} onPaneContextMenu={event => openContextMenu(event)} onPaneClick={() => { setSelected(null); setSelectedIds([]); setSelectedEdgeIds([]) }} onNodeDragStop={(_, node) => void syncNode(node.id, { position_x: node.position.x, position_y: node.position.y })} onConnectStart={(_, params) => { connectionSourceRef.current = params.nodeId; setConnectionCandidate(null) }} onConnectEnd={() => { connectionSourceRef.current = null; setConnectionCandidate(null) }} onMouseMove={onConnectionPointerMove} onConnect={onConnect} onMove={(_, viewport) => { if (Math.abs(viewport.zoom - zoomRef.current) >= 0.02) { zoomRef.current = viewport.zoom; setZoom(viewport.zoom) } }} nodeTypes={nodeTypes} edgeTypes={edgeTypes} deleteKeyCode={null} connectionMode={ConnectionMode.Loose} connectionRadius={32} proOptions={{ hideAttribution: true }} onlyRenderVisibleElements minZoom={0.2} maxZoom={2} defaultEdgeOptions={{ type: 'memory' }}>
-        <Background variant={BackgroundVariant.Dots} color="#484252" gap={20} size={dotSize} />
+        <Background variant={BackgroundVariant.Dots} color={theme === 'light' ? '#d2cadb' : '#484252'} gap={20} size={dotSize} />
       </ReactFlow>
       <div className="timeline"><span>{formatPeriod(board)}</span><div className="timeline-scroll" onWheel={event => { if (event.deltaY) { event.currentTarget.scrollLeft += event.deltaY; event.preventDefault() } }}><div className="timeline-days">{days.map(date => { const datedNodes = board.nodes.filter(node => node.temporal_date === date); const bookmarks = datedNodes.length < 2 ? [] : datedNodes.filter((_, index) => index % 2 === 0).slice(0, 5); const day = Number(date.slice(8)); return <i key={date}><b className="timeline-bookmarks">{bookmarks.map((node, index) => <em key={node.id} className={`timeline-bookmark ${node.type}`} style={{ bottom: index * 9 }} title={node.title || node.track_data?.title || 'Воспоминание'} />)}</b><small>{day}</small></i> })}</div></div></div>
     </section>
-    {selected && ['note', 'media', 'track', 'canvas_text', 'canvas_image'].includes(selected.type) && <Editor node={selected} boardStartDate={board.start_date} boardEndDate={board.end_date} onClose={closeEditor} onSave={save} onRequestDelete={() => setDeleteDialog(true)} onDeleteAsset={removeAsset} onUpdateAsset={updateAsset} onReorderAssets={reorderAssets} onPreview={preview} onTextChange={object_data => objectChange(selected.id, { object_data })} onTextPreview={fontFamily => previewTextFont(selected.id, fontFamily)} onCreate={create} />}
+    {selected && ['note', 'media', 'track', 'canvas_text', 'canvas_image'].includes(selected.type) && <Editor node={selected} boardStartDate={board.start_date} boardEndDate={board.end_date} theme={theme} onClose={closeEditor} onSave={save} onRequestDelete={() => setDeleteDialog(true)} onDeleteAsset={removeAsset} onUpdateAsset={updateAsset} onReorderAssets={reorderAssets} onPreview={preview} onTextChange={object_data => objectChange(selected.id, { object_data })} onTextPreview={fontFamily => previewTextFont(selected.id, fontFamily)} onCreate={create} />}
     {contextMenu && <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}>
       {contextMenu.edgeIds?.length ? <><p>{contextMenu.edgeIds.length > 1 ? 'Связи' : 'Связь'}</p><button className="context-danger" onClick={() => { void onEdgesDelete(edges.filter(edge => contextMenu.edgeIds?.includes(Number(edge.id)))); setContextMenu(null) }}>Удалить {contextMenu.edgeIds.length > 1 ? 'связи' : 'связь'}</button></>
         : contextMenu.nodeIds && contextMenu.nodeIds.length > 1 ? <><p>Выбрано: {contextMenu.nodeIds.length}</p><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'front'); setContextMenu(null) }}>На передний план</button><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'back'); setContextMenu(null) }}>На задний план</button><button className="context-danger" onClick={() => { setDeleteDialog(true); setContextMenu(null) }}>Удалить выбранные</button></>
@@ -454,7 +461,7 @@ function BoardCanvas({ boardId, onHome }: { boardId: number; onHome: () => void 
   </main>
 }
 
-function BoardHome({ onOpen }: { onOpen: (id: number) => void }) {
+function BoardHome({ onOpen, theme, onToggleTheme }: { onOpen: (id: number) => void; theme: Theme; onToggleTheme: () => void }) {
   const [boards, setBoards] = useState<Board[]>([])
   const [title, setTitle] = useState('')
   const initialDate = todayKey()
@@ -498,14 +505,17 @@ function BoardHome({ onOpen }: { onOpen: (id: number) => void }) {
     } catch (deleteError) { setError(deleteError instanceof Error ? deleteError.message : 'Не удалось удалить доску') }
     finally { setDeletingBoard(false) }
   }
-  return <main className="board-home"><header><div><p className="home-logo">MEMORYBOX</p></div></header><section className="board-home-content"><form className="new-board" onSubmit={createBoard}><p className="eyebrow">Новая доска</p><h2>Начать новый период</h2><label>Название<input value={title} onChange={event => setTitle(event.target.value)} placeholder="Например, Поездка в Карелию" autoFocus /></label><div className="new-board-date"><label>С<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><label>По<input type="date" min={startDate} value={endDate} onChange={event => setEndDate(event.target.value)} /></label></div>{error && <p className="error">{error}</p>}<button className="new-board-submit" disabled={creating}>{creating ? 'Создаю…' : 'Создать доску'}</button></form><div className="board-library"><div className="board-library-heading"><p className="eyebrow">Ваши доски</p><span>{boards.length}</span></div>{boards.length ? <div className="board-grid">{boards.map(board => <article className="board-card" key={board.id}><button className="board-card-open" onClick={() => onOpen(board.id)}><span className="board-card-dates"><time>{formatDate(board.start_date)}</time>{board.start_date !== board.end_date && <time>{formatDate(board.end_date)}</time>}</span><strong>{board.title}</strong><small>Открыть холст</small></button><button className="board-card-settings" aria-label={`Настроить доску «${board.title}»`} title="Настроить доску" onClick={() => setEditingBoard({ ...board })}>⚙</button></article>)}</div> : <p className="board-empty">Создайте первую доску — она появится здесь.</p>}</div></section>{editingBoard && <div className="confirm-backdrop" onMouseDown={() => setEditingBoard(null)}><form className="board-settings" onMouseDown={event => event.stopPropagation()} onSubmit={saveBoardSettings}><p className="eyebrow">Настройки доски</p><h2>Период и название</h2><label>Название<input value={editingBoard.title} onChange={event => setEditingBoard({ ...editingBoard, title: event.target.value })} autoFocus /></label><div className="new-board-date"><label>С<input type="date" value={editingBoard.start_date} onChange={event => setEditingBoard({ ...editingBoard, start_date: event.target.value })} /></label><label>По<input type="date" min={editingBoard.start_date} value={editingBoard.end_date} onChange={event => setEditingBoard({ ...editingBoard, end_date: event.target.value })} /></label></div><div><button type="button" className="danger" onClick={() => { setBoardToDelete(editingBoard); setEditingBoard(null) }}>Удалить доску</button><span /><button type="button" onClick={() => setEditingBoard(null)}>Отмена</button><button className="primary" disabled={savingSettings}>{savingSettings ? 'Сохраняю…' : 'Сохранить'}</button></div></form></div>}{boardToDelete && <div className="confirm-backdrop"><div className="confirm-dialog"><p className="eyebrow">Удаление доски</p><h2>Удалить «{boardToDelete.title}»?</h2><p>Все карточки, связи и загруженные файлы этой доски будут удалены без возможности восстановления.</p><div><button onClick={() => setBoardToDelete(null)} disabled={deletingBoard}>Отмена</button><button className="confirm-delete" onClick={() => void deleteBoard()} disabled={deletingBoard}>{deletingBoard ? 'Удаляю…' : 'Удалить доску'}</button></div></div></div>}</main>
+  return <main className={`board-home theme-${theme}`}><header><div><p className="home-logo">MEMORYBOX</p></div><button className="theme-toggle" onClick={onToggleTheme} aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}>{theme === 'dark' ? '☀' : '☾'}</button></header><section className="board-home-content"><form className="new-board" onSubmit={createBoard}><p className="eyebrow">Новая доска</p><h2>Начать новый период</h2><label>Название<input value={title} onChange={event => setTitle(event.target.value)} placeholder="Например, Поездка в Карелию" autoFocus /></label><div className="new-board-date"><label>С<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><label>По<input type="date" min={startDate} value={endDate} onChange={event => setEndDate(event.target.value)} /></label></div>{error && <p className="error">{error}</p>}<button className="new-board-submit" disabled={creating}>{creating ? 'Создаю…' : 'Создать доску'}</button></form><div className="board-library"><div className="board-library-heading"><p className="eyebrow">Ваши доски</p><span>{boards.length}</span></div>{boards.length ? <div className="board-grid">{boards.map(board => <article className="board-card" key={board.id}><button className="board-card-open" onClick={() => onOpen(board.id)}><span className="board-card-dates"><time>{formatDate(board.start_date)}</time>{board.start_date !== board.end_date && <time>{formatDate(board.end_date)}</time>}</span><strong>{board.title}</strong><small>Открыть холст</small></button><button className="board-card-settings" aria-label={`Настроить доску «${board.title}»`} title="Настроить доску" onClick={() => setEditingBoard({ ...board })}>⚙</button></article>)}</div> : <p className="board-empty">Создайте первую доску — она появится здесь.</p>}</div></section>{editingBoard && <div className="confirm-backdrop" onMouseDown={() => setEditingBoard(null)}><form className="board-settings" onMouseDown={event => event.stopPropagation()} onSubmit={saveBoardSettings}><p className="eyebrow">Настройки доски</p><h2>Период и название</h2><label>Название<input value={editingBoard.title} onChange={event => setEditingBoard({ ...editingBoard, title: event.target.value })} autoFocus /></label><div className="new-board-date"><label>С<input type="date" value={editingBoard.start_date} onChange={event => setEditingBoard({ ...editingBoard, start_date: event.target.value })} /></label><label>По<input type="date" min={editingBoard.start_date} value={editingBoard.end_date} onChange={event => setEditingBoard({ ...editingBoard, end_date: event.target.value })} /></label></div><div><button type="button" className="danger" onClick={() => { setBoardToDelete(editingBoard); setEditingBoard(null) }}>Удалить доску</button><span /><button type="button" onClick={() => setEditingBoard(null)}>Отмена</button><button className="primary" disabled={savingSettings}>{savingSettings ? 'Сохраняю…' : 'Сохранить'}</button></div></form></div>}{boardToDelete && <div className="confirm-backdrop"><div className="confirm-dialog"><p className="eyebrow">Удаление доски</p><h2>Удалить «{boardToDelete.title}»?</h2><p>Все карточки, связи и загруженные файлы этой доски будут удалены без возможности восстановления.</p><div><button onClick={() => setBoardToDelete(null)} disabled={deletingBoard}>Отмена</button><button className="confirm-delete" onClick={() => void deleteBoard()} disabled={deletingBoard}>{deletingBoard ? 'Удаляю…' : 'Удалить доску'}</button></div></div></div>}</main>
 }
 
 export default function App() {
   const [path, setPath] = useState(() => window.location.pathname)
+  const [theme, setTheme] = useState<Theme>(() => window.localStorage.getItem('memorybox-theme') === 'light' ? 'light' : 'dark')
   useEffect(() => { const onPopState = () => setPath(window.location.pathname); window.addEventListener('popstate', onPopState); return () => window.removeEventListener('popstate', onPopState) }, [])
+  useEffect(() => { window.localStorage.setItem('memorybox-theme', theme); document.documentElement.dataset.theme = theme }, [theme])
   const openBoard = useCallback((id: number) => { const next = `/boards/${id}`; window.history.pushState({}, '', next); setPath(next) }, [])
   const openHome = useCallback(() => { window.history.pushState({}, '', '/'); setPath('/') }, [])
   const match = path.match(/^\/boards\/(\d+)$/)
-  return match ? <ReactFlowProvider><BoardCanvas boardId={Number(match[1])} onHome={openHome} /></ReactFlowProvider> : <BoardHome onOpen={openBoard} />
+  const toggleTheme = useCallback(() => setTheme(current => current === 'dark' ? 'light' : 'dark'), [])
+  return match ? <ReactFlowProvider><BoardCanvas boardId={Number(match[1])} onHome={openHome} theme={theme} onToggleTheme={toggleTheme} /></ReactFlowProvider> : <BoardHome onOpen={openBoard} theme={theme} onToggleTheme={toggleTheme} />
 }
