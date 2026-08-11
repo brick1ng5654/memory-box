@@ -3,6 +3,7 @@ import { api, Asset, CanvasObjectData, DatePosition, MemoryNode, NodeType, Playl
 
 type Props = {
   node: MemoryNode | null; boardStartDate: string; boardEndDate: string; onClose: () => void
+  theme: 'dark' | 'light'
   onSave: (data: Partial<MemoryNode>, files?: File[]) => Promise<void>; onRequestDelete: () => void
   onDeleteAsset: (asset: Asset) => Promise<void>; onUpdateAsset: (asset: Asset, patch: Partial<Pick<Asset, 'is_favorite' | 'sort_order'>>) => Promise<void>
   onReorderAssets: (assets: Asset[]) => Promise<void>; onPreview: (data: Partial<MemoryNode>) => void; onTextChange: (data: CanvasObjectData) => void; onTextPreview: (fontFamily: string | null) => void; onCreate: (type: NodeType) => void
@@ -23,7 +24,7 @@ const fontOptions = [
   { value: "'Unbounded', sans-serif", label: 'Unbounded' }, { value: "'Rubik Mono One', monospace", label: 'Rubik Mono One' },
 ]
 
-export default function Editor({ node, boardStartDate, boardEndDate, onClose, onSave, onRequestDelete, onDeleteAsset, onUpdateAsset, onReorderAssets, onPreview, onTextChange, onTextPreview }: Props) {
+export default function Editor({ node, boardStartDate, boardEndDate, theme, onClose, onSave, onRequestDelete, onDeleteAsset, onUpdateAsset, onReorderAssets, onPreview, onTextChange, onTextPreview }: Props) {
   const [draft, setDraft] = useState<Partial<MemoryNode>>({})
   const [files, setFiles] = useState<File[]>([])
   const [busy, setBusy] = useState(false)
@@ -88,7 +89,9 @@ export default function Editor({ node, boardStartDate, boardEndDate, onClose, on
   if (!node) return null
   if (node.type === 'canvas_text') {
     const text = draft.object_data || {}
-    const textColors = ['#f7f2ff', '#f7b8c6', '#ffcb85', '#f4e57a', '#a7e6ba', '#8bd8ff', '#b7a4ff', '#f0a4f5', '#1c1a22']
+    const defaultTextColor = theme === 'dark' ? '#ffffff' : '#000000'
+    const normalizedTextColor = text.color?.trim().toLowerCase()
+    const colorInputValue = !normalizedTextColor || ['#fff', '#ffffff', 'white', '#000', '#000000', 'black'].includes(normalizedTextColor) ? defaultTextColor : text.color
     const updateText = (patch: Partial<CanvasObjectData>) => {
       const next = { ...(draft.object_data || {}), ...patch }
       updateDraft({ object_data: next })
@@ -103,7 +106,7 @@ export default function Editor({ node, boardStartDate, boardEndDate, onClose, on
       <label className="toggle-label"><input type="checkbox" checked={text.font_style || false} onChange={event => updateText({ font_style: event.target.checked })} />Курсив</label>
       <label>Выравнивание<select value={text.text_align || 'left'} onChange={event => updateText({ text_align: event.target.value as CanvasObjectData['text_align'] })}><option value="left">Слева</option><option value="center">По центру</option><option value="right">Справа</option><option value="justify">По ширине</option></select></label>
       <label>Поворот<input type="range" min="-180" max="180" step="1" value={text.rotation || 0} onChange={event => updateText({ rotation: Number(event.target.value) })} /><span className="range-value">{text.rotation || 0}°</span></label>
-      <label>Цвет</label><div className="text-color-palette" aria-label="Палитра цветов">{textColors.map(color => <button key={color} type="button" className={text.color === color ? 'active' : ''} style={{ backgroundColor: color }} title={color} onClick={() => updateText({ color })} />)}</div><label>Свой цвет<input type="color" value={text.color || '#f7f2ff'} onChange={event => updateText({ color: event.target.value })} /></label>
+      <label>Цвет<input type="color" value={colorInputValue} onChange={event => updateText({ color: event.target.value })} /></label>
       {error && <p className="error">{error}</p>}<div className="editor-actions"><button className="danger" onClick={onRequestDelete}>Удалить</button>{busy && <span className="saving">Сохраняю…</span>}</div>
     </aside>
   }
