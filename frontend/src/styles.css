@@ -129,3 +129,124 @@ header input { width: min(560px, calc(100vw - 180px)); color: #f7f2ff; font-weig
 .theme-light .board-settings > div:last-child button { color: #245174; background: #dcefff; }
 .theme-light .primary, .theme-light .new-board-submit, .theme-light .board-settings > div:last-child .primary { background: #0a84ff; }
 .theme-light .primary:hover, .theme-light .new-board-submit:hover { background: #0071e3; }
+
+.board-library-controls { display: flex; gap: 10px; align-items: center; }
+.board-library-controls label { display: flex; gap: 7px; align-items: center; color: #aaa0b5; font-size: 11px; font-weight: 700; }
+.board-library-controls select { border: 1px solid #51485e; border-radius: 8px; padding: 6px 26px 6px 8px; color: #ded5eb; background: #27232e; font: inherit; }
+.board-grid { grid-template-columns: repeat(auto-fill, minmax(170px, 220px)); gap: 12px 18px; justify-content: start; }
+.board-card { min-height: 0; overflow: visible; aspect-ratio: 4 / 3; isolation: isolate; border: 0; border-radius: 0; background: transparent center / contain no-repeat; box-shadow: none; cursor: default; }
+.board-card::before, .board-card::after { display: none; }
+.board-card:hover { border-color: transparent; transform: translateY(-3px); }
+.board-card.dragging { cursor: grabbing; opacity: .45; }
+.board-card-open { position: relative; min-height: 100%; padding: 31% 17% 13%; }
+.board-card .board-card-dates { max-width: calc(100% - 22px); color: #1b618e; }
+.board-card strong { margin-top: 14px; color: #123a59; }
+.board-card small { color: #285b7d; }
+.board-card-settings { top: 30%; right: 13%; border-color: rgba(22,104,157,.36); color: #165b88; background: rgba(222,246,255,.62); }
+.board-card-settings:hover { border-color: #087fd0; background: rgba(236,251,255,.9); }
+
+.theme-light .board-library-controls label { color: #54708a; }
+.theme-light .board-library-controls select { border-color: #91c8e8; color: #175f94; background: #d5efff; }
+.theme-light .board-card { border: 0; background: transparent center / contain no-repeat; box-shadow: none; }
+.theme-light .board-card:hover { border-color: transparent; }
+.theme-light .board-card .board-card-dates { color: #1b618e; }
+.theme-light .board-card strong { color: #123a59; }
+
+/* The settings sheet must finish immediately: the reveal itself starts at the
+   lower-right point, without the old scale animation lingering at the end. */
+.board-settings-backdrop { animation: none !important; }
+.board-settings-backdrop .board-settings {
+  clip-path: none;
+  opacity: 1;
+  transform: scale3d(0, 0, 1);
+  transform-origin: 100% 100%;
+  animation: none;
+  transition: transform .32s cubic-bezier(.18,.9,.2,1);
+  will-change: transform;
+}
+.board-settings-backdrop.open .board-settings {
+  transform: scale3d(1, 1, 1);
+}
+
+.board-settings-backdrop { animation: none; }
+.board-settings-backdrop .board-settings { clip-path: inset(100% 0 0 100% round 18px); transform: none; transform-origin: 100% 100%; animation: none; }
+.board-settings-backdrop.open .board-settings { clip-path: inset(0 round 18px); transition: clip-path .42s cubic-bezier(.16,.85,.25,1); }
+
+/* Board caption controls: keep this after legacy board-card rules. */
+.board-card-settings { top: calc(100% + 5px); right: 4%; bottom: auto; width: 22px; height: 22px; opacity: 0; pointer-events: none; transform: scale(.84); transition: opacity .16s ease, transform .18s cubic-bezier(.2,.75,.25,1), background .16s ease, border-color .16s ease; }
+.board-card:hover .board-card-settings, .board-card:focus-within .board-card-settings { opacity: 1; pointer-events: auto; transform: scale(1); }
+.confirm-backdrop .board-settings { transform-origin: 100% 100%; animation: macos-sheet-open .34s cubic-bezier(.2,.85,.25,1) both; }
+@keyframes macos-sheet-open { 0% { opacity: 1; transform: scale(0); } 72% { opacity: 1; transform: scale(.9); } 100% { opacity: 1; transform: scale(1); } }
+
+.board-card-open { position: absolute; inset: 0; min-height: 0; padding: 0; }
+.board-card .board-card-dates { display: none; }
+.board-card-caption { position: absolute; z-index: 2; top: 100%; right: 0; left: 0; display: flex; min-width: 0; gap: 3px; align-items: center; justify-content: center; margin-top: 5px; }
+.board-card-title { display: block; overflow: hidden; max-width: 100%; padding: 0; border: 0; color: #eef4ff; background: transparent; font-size: 14px; font-weight: 800; line-height: 22px; text-overflow: ellipsis; white-space: nowrap; }
+.board-card-title:hover { text-decoration: none; }
+.board-card-settings { position: absolute; top: calc(100% + 5px); right: 8%; bottom: auto; display: grid; width: 22px; height: 22px; place-items: center; border-radius: 7px; font-size: 13px; opacity: 0; pointer-events: none; transform: scale(.84); transition: opacity .16s ease, transform .18s cubic-bezier(.2,.75,.25,1), background .16s ease, border-color .16s ease; }
+.board-card:hover .board-card-settings, .board-card:focus-within .board-card-settings { opacity: 1; pointer-events: auto; transform: scale(1); }
+.theme-light .board-card-title { color: #123a59; }
+.confirm-backdrop:has(.board-settings) { animation: macos-backdrop-in .18s ease-out both; }
+.confirm-backdrop .board-settings { transform-origin: 100% 100%; animation: macos-sheet-open .34s cubic-bezier(.16,.85,.22,1) both; }
+@keyframes macos-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes macos-sheet-open { from { opacity: 0; transform: translate(24px, 38px) scaleX(.14) scaleY(.06); filter: blur(7px); } 58% { opacity: 1; transform: translate(3px, 7px) scaleX(1.015) scaleY(.9); filter: blur(0); } to { opacity: 1; transform: translate(0) scale(1); filter: blur(0); } }
+
+.board-settings > .board-settings-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 17px; }
+.board-settings > .board-settings-actions span { flex: 1; }
+.board-settings > .board-settings-actions button { padding: 6px 9px; border-radius: 8px; font-size: 12px; }
+.folder-icon-field { position: relative; }
+.folder-icon-picker-button { display: flex; width: 100%; min-height: 46px; gap: 10px; align-items: center; margin-top: 5px; padding: 6px 9px; border: 1px solid #4a4454; border-radius: 9px; color: #eee8f5; background: #18161c; text-align: left; }
+.folder-icon-picker-button:hover { border-color: #8e7ab9; }
+.folder-icon-picker-button img { width: 37px; height: 28px; object-fit: contain; }
+.folder-icon-picker-button span { font-size: 12px; font-weight: 700; }
+.folder-icon-browser { margin-top: 7px; }
+.folder-icon-back { margin-bottom: 6px; padding: 4px 0; border: 0; color: #bbb2c6; background: transparent; font-size: 11px; font-weight: 700; }
+.folder-icon-back:hover { color: #fff; }
+.folder-icon-options { display: grid; max-height: 256px; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; overflow-y: auto; margin-top: 7px; padding-right: 4px; scrollbar-color: #67577a transparent; }
+.folder-icon-options button { display: grid; gap: 3px; justify-items: center; padding: 6px; border: 1px solid #4a4454; border-radius: 9px; color: #bbb2c6; background: #201d26; font-size: 10px; text-transform: capitalize; }
+.folder-icon-options button:hover, .folder-icon-options button.selected { border-color: #a995d8; color: #fff; background: #302a3b; }
+.folder-icon-options img { width: 54px; height: 40px; object-fit: contain; }
+.folder-icon-directory img { border-radius: 5px; }
+.theme-light .folder-icon-picker-button { border-color: #91c8e8; color: #245174; background: #eef8ff; }
+.theme-light .folder-icon-picker-button:hover { border-color: #0a84ff; }
+.theme-light .folder-icon-options button { border-color: #91c8e8; color: #336987; background: #eef8ff; }
+.theme-light .folder-icon-options button:hover, .theme-light .folder-icon-options button.selected { border-color: #0a84ff; color: #123a59; background: #dcefff; }
+.theme-light .folder-icon-back { color: #336987; }
+.theme-light .folder-icon-back:hover { color: #123a59; }
+.theme-light .folder-icon-options { scrollbar-color: #78b8dd transparent; }
+.theme-light .board-card small { color: #285b7d; }
+.theme-light .board-card-settings { border-color: rgba(22,104,157,.36); color: #165b88; background: rgba(222,246,255,.62); }
+.theme-light .board-card-settings:hover { border-color: #087fd0; background: rgba(236,251,255,.9); }
+
+@media (max-width: 760px) { .board-library-heading { align-items: flex-start; gap: 10px; } .board-library-controls { align-items: flex-end; flex-direction: column-reverse; gap: 5px; } .board-library-controls label { flex-direction: column; align-items: flex-start; } }
+
+/* Settings panel — a genuine point-to-panel expansion from the lower-right
+   corner. These final rules intentionally override legacy modal animations. */
+.board-settings-backdrop { animation: none !important; }
+.board-settings-backdrop .board-settings {
+  clip-path: none !important;
+  opacity: 1;
+  /* Never paint the full panel before its opening keyframe begins. */
+  transform: scale3d(.001, .001, 1);
+  transform-origin: 100% 100%;
+  animation: none !important;
+  transition: none;
+}
+.board-settings-backdrop.open .board-settings {
+  animation: board-settings-expand .34s cubic-bezier(.18,.9,.2,1) both !important;
+  will-change: transform;
+}
+@keyframes board-settings-expand {
+  from { transform: scale3d(0, 0, 1); }
+  to { transform: scale3d(1, 1, 1); }
+}
+
+.board-grid { row-gap: 38px; }
+.board-card-open { overflow: visible; }
+.board-card-open small { display: none; }
+.board-card .board-card-dates { position: absolute; top: 46%; left: 17%; max-width: 56%; margin: 0; opacity: 0; transition: opacity .16s ease; }
+.board-card strong { position: absolute; top: 100%; right: 0; left: 0; margin: 5px 0 0; color: #eef4ff; text-align: center; }
+.board-card-settings { top: 44%; opacity: 0; pointer-events: none; transform: translateY(3px); transition: opacity .16s ease, transform .16s ease, background .16s ease, border-color .16s ease; }
+.board-card:hover .board-card-dates, .board-card:focus-within .board-card-dates, .board-card:hover .board-card-settings, .board-card:focus-within .board-card-settings { opacity: 1; }
+.board-card:hover .board-card-settings, .board-card:focus-within .board-card-settings { pointer-events: auto; transform: translateY(0); }
+.theme-light .board-card strong { color: #123a59; }

@@ -461,6 +461,23 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
   </main>
 }
 
+type BoardSort = 'date' | 'duration'
+const boardFolderIconsStorageKey = 'memorybox-board-folder-icons'
+const boardDurationDays = (board: Pick<Board, 'start_date' | 'end_date'>) => Math.max(0, Math.round((new Date(`${board.end_date}T00:00:00`).getTime() - new Date(`${board.start_date}T00:00:00`).getTime()) / 86_400_000) + 1)
+const boardFolderIconModules = import.meta.glob('./assets/board-folders/**/*.{webp,png,jpg,jpeg,svg}', { eager: true, query: '?url', import: 'default' }) as Record<string, string>
+const boardFolderIcons = Object.entries(boardFolderIconModules).map(([path, url]) => {
+  const relativePath = path.replace('./assets/board-folders/', '')
+  const parts = relativePath.split('/')
+  const filename = parts.pop() || ''
+  return {
+    id: path,
+    url,
+    directory: parts.join('/'),
+    label: filename.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ') || 'Папка',
+  }
+}).sort((left, right) => left.id.localeCompare(right.id, 'ru'))
+const defaultBoardFolderIconId = boardFolderIcons.find(icon => icon.label === 'macos blue')?.id || boardFolderIcons[0]?.id || ''
+
 function BoardHome({ onOpen, theme, onToggleTheme }: { onOpen: (id: number) => void; theme: Theme; onToggleTheme: () => void }) {
   const [boards, setBoards] = useState<Board[]>([])
   const [title, setTitle] = useState('')
@@ -468,13 +485,41 @@ function BoardHome({ onOpen, theme, onToggleTheme }: { onOpen: (id: number) => v
   const [startDate, setStartDate] = useState(initialDate)
   const [endDate, setEndDate] = useState(initialDate)
   const [editingBoard, setEditingBoard] = useState<Board | null>(null)
+  const [settingsOpening, setSettingsOpening] = useState(false)
   const [boardToDelete, setBoardToDelete] = useState<Board | null>(null)
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
   const [savingSettings, setSavingSettings] = useState(false)
   const [deletingBoard, setDeletingBoard] = useState(false)
-  const loadBoards = useCallback(async () => { try { setBoards(await api.boards()) } catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Не удалось загрузить доски') } }, [])
+  const [sort, setSort] = useState<BoardSort>('date')
+  const [folderIconsByBoard, setFolderIconsByBoard] = useState<Record<string, string>>(() => {
+    try { const saved = JSON.parse(window.localStorage.getItem(boardFolderIconsStorageKey) || '{}'); return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {} }
+    catch { return {} }
+  })
+  const [editingFolderIconId, setEditingFolderIconId] = useState(defaultBoardFolderIconId)
+  const [folderIconPickerOpen, setFolderIconPickerOpen] = useState(false)
+  const [folderIconDirectory, setFolderIconDirectory] = useState('')
+  const loadBoards = useCallback(async () => {
+    try {
+      const next = await api.boards()
+      setBoards(next)
+    } catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Не удалось загрузить доски') }
+  }, [])
   useEffect(() => { void loadBoards() }, [loadBoards])
+  useEffect(() => {
+    if (!editingBoard) { setSettingsOpening(false); return }
+    // Keep the point-sized panel on screen for a complete paint before opening
+    // it; a single requestAnimationFrame can otherwise be coalesced by React.
+    let openingFrame = 0
+    const initialFrame = window.requestAnimationFrame(() => {
+      openingFrame = window.requestAnimationFrame(() => setSettingsOpening(true))
+    })
+    return () => {
+      window.cancelAnimationFrame(initialFrame)
+      window.cancelAnimationFrame(openingFrame)
+    }
+  }, [editingBoard?.id])
+  useEffect(() => { window.localStorage.setItem(boardFolderIconsStorageKey, JSON.stringify(folderIconsByBoard)) }, [folderIconsByBoard])
   const createBoard = async (event: React.FormEvent) => {
     event.preventDefault()
     if (creating) return
@@ -491,6 +536,8 @@ function BoardHome({ onOpen, theme, onToggleTheme }: { onOpen: (id: number) => v
       const title = editingBoard.title.trim() || `${formatDate(editingBoard.start_date)} — ${formatDate(editingBoard.end_date)}`
       const saved = await api.updateBoard(editingBoard.id, { title, start_date: editingBoard.start_date, end_date: editingBoard.end_date })
       setBoards(current => current.map(board => board.id === saved.id ? { ...board, ...saved } : board))
+      setFolderIconsByBoard(current => ({ ...current, [String(editingBoard.id)]: editingFolderIconId }))
+      setFolderIconPickerOpen(false)
       setEditingBoard(null)
     } catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'Не удалось сохранить настройки') }
     finally { setSavingSettings(false) }
@@ -501,11 +548,86 @@ function BoardHome({ onOpen, theme, onToggleTheme }: { onOpen: (id: number) => v
     try {
       await api.deleteBoard(boardToDelete.id)
       setBoards(current => current.filter(board => board.id !== boardToDelete.id))
+      setFolderIconsByBoard(current => { const next = { ...current }; delete next[String(boardToDelete.id)]; return next })
       setBoardToDelete(null)
     } catch (deleteError) { setError(deleteError instanceof Error ? deleteError.message : 'Не удалось удалить доску') }
     finally { setDeletingBoard(false) }
   }
-  return <main className={`board-home theme-${theme}`}><header><div><p className="home-logo">MEMORYBOX</p></div><button className="theme-toggle" onClick={onToggleTheme} aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}>{theme === 'dark' ? '☀' : '☾'}</button></header><section className="board-home-content"><form className="new-board" onSubmit={createBoard}><p className="eyebrow">Новая доска</p><h2>Начать новый период</h2><label>Название<input value={title} onChange={event => setTitle(event.target.value)} placeholder="Например, Поездка в Карелию" autoFocus /></label><div className="new-board-date"><label>С<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><label>По<input type="date" min={startDate} value={endDate} onChange={event => setEndDate(event.target.value)} /></label></div>{error && <p className="error">{error}</p>}<button className="new-board-submit" disabled={creating}>{creating ? 'Создаю…' : 'Создать доску'}</button></form><div className="board-library"><div className="board-library-heading"><p className="eyebrow">Ваши доски</p><span>{boards.length}</span></div>{boards.length ? <div className="board-grid">{boards.map(board => <article className="board-card" key={board.id}><button className="board-card-open" onClick={() => onOpen(board.id)}><span className="board-card-dates"><time>{formatDate(board.start_date)}</time>{board.start_date !== board.end_date && <time>{formatDate(board.end_date)}</time>}</span><strong>{board.title}</strong><small>Открыть холст</small></button><button className="board-card-settings" aria-label={`Настроить доску «${board.title}»`} title="Настроить доску" onClick={() => setEditingBoard({ ...board })}>⚙</button></article>)}</div> : <p className="board-empty">Создайте первую доску — она появится здесь.</p>}</div></section>{editingBoard && <div className="confirm-backdrop" onMouseDown={() => setEditingBoard(null)}><form className="board-settings" onMouseDown={event => event.stopPropagation()} onSubmit={saveBoardSettings}><p className="eyebrow">Настройки доски</p><h2>Период и название</h2><label>Название<input value={editingBoard.title} onChange={event => setEditingBoard({ ...editingBoard, title: event.target.value })} autoFocus /></label><div className="new-board-date"><label>С<input type="date" value={editingBoard.start_date} onChange={event => setEditingBoard({ ...editingBoard, start_date: event.target.value })} /></label><label>По<input type="date" min={editingBoard.start_date} value={editingBoard.end_date} onChange={event => setEditingBoard({ ...editingBoard, end_date: event.target.value })} /></label></div><div><button type="button" className="danger" onClick={() => { setBoardToDelete(editingBoard); setEditingBoard(null) }}>Удалить доску</button><span /><button type="button" onClick={() => setEditingBoard(null)}>Отмена</button><button className="primary" disabled={savingSettings}>{savingSettings ? 'Сохраняю…' : 'Сохранить'}</button></div></form></div>}{boardToDelete && <div className="confirm-backdrop"><div className="confirm-dialog"><p className="eyebrow">Удаление доски</p><h2>Удалить «{boardToDelete.title}»?</h2><p>Все карточки, связи и загруженные файлы этой доски будут удалены без возможности восстановления.</p><div><button onClick={() => setBoardToDelete(null)} disabled={deletingBoard}>Отмена</button><button className="confirm-delete" onClick={() => void deleteBoard()} disabled={deletingBoard}>{deletingBoard ? 'Удаляю…' : 'Удалить доску'}</button></div></div></div>}</main>
+  const sortedBoards = useMemo(() => sort === 'date'
+    ? [...boards].sort((left, right) => right.start_date.localeCompare(left.start_date) || right.end_date.localeCompare(left.end_date))
+    : [...boards].sort((left, right) => boardDurationDays(right) - boardDurationDays(left) || right.start_date.localeCompare(left.start_date)), [boards, sort])
+  const folderIconForBoard = (boardId: number) => boardFolderIcons.find(icon => icon.id === folderIconsByBoard[String(boardId)]) || boardFolderIcons[0]
+  const folderIconEntries = useMemo(() => {
+    const prefix = folderIconDirectory ? `${folderIconDirectory}/` : ''
+    const directories = [...new Set(boardFolderIcons
+      .filter(icon => icon.directory.startsWith(prefix) && icon.directory !== folderIconDirectory)
+      .map(icon => icon.directory.slice(prefix.length).split('/')[0])
+      .filter(Boolean))].sort((left, right) => left.localeCompare(right, 'ru')).map(name => {
+      const fullPath = `${prefix}${name}`
+      return { name, cover: boardFolderIcons.find(icon => icon.directory === fullPath || icon.directory.startsWith(`${fullPath}/`)) }
+    })
+    return { directories, icons: boardFolderIcons.filter(icon => icon.directory === folderIconDirectory) }
+  }, [folderIconDirectory])
+  return (
+    <main className={`board-home theme-${theme}`}>
+      <header>
+        <div><p className="home-logo">MEMORYBOX</p></div>
+        <button className="theme-toggle" onClick={onToggleTheme} aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}>{theme === 'dark' ? '☀' : '☾'}</button>
+      </header>
+      <section className="board-home-content">
+        <form className="new-board" onSubmit={createBoard}>
+          <p className="eyebrow">Новая доска</p>
+          <h2>Начать новый период</h2>
+          <label>Название<input value={title} onChange={event => setTitle(event.target.value)} placeholder="Например, Поездка в Карелию" autoFocus /></label>
+          <div className="new-board-date"><label>С<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><label>По<input type="date" min={startDate} value={endDate} onChange={event => setEndDate(event.target.value)} /></label></div>
+          {error && <p className="error">{error}</p>}
+          <button className="new-board-submit" disabled={creating}>{creating ? 'Создаю…' : 'Создать доску'}</button>
+        </form>
+        <div className="board-library">
+          <div className="board-library-heading">
+            <p className="eyebrow">Ваши доски</p>
+            <div className="board-library-controls">
+              <label>Сортировка<select value={sort} onChange={event => setSort(event.target.value as BoardSort)}><option value="date">По дате</option><option value="duration">По длительности</option></select></label>
+              <span>{boards.length}</span>
+            </div>
+          </div>
+          {boards.length ? <div className="board-grid">{sortedBoards.map(board => {
+            const folderIcon = folderIconForBoard(board.id)
+            return <article className="board-card" key={board.id} style={folderIcon ? { backgroundImage: `url("${folderIcon.url}")` } : undefined}>
+              <button className="board-card-open" onClick={() => onOpen(board.id)} aria-label={`Открыть доску «${board.title}»`} />
+              <div className="board-card-caption">
+                <button className="board-card-title" onClick={() => onOpen(board.id)}>{board.title}</button>
+              </div>
+              <button className="board-card-settings" aria-label={`Настроить доску «${board.title}»`} title="Настроить доску" onClick={() => { setSettingsOpening(false); setEditingBoard({ ...board }); setEditingFolderIconId(folderIcon?.id || defaultBoardFolderIconId); setFolderIconPickerOpen(false); setFolderIconDirectory('') }}>⚙</button>
+            </article>
+          })}</div> : <p className="board-empty">Создайте первую доску — она появится здесь.</p>}
+        </div>
+      </section>
+      {editingBoard && <div className={`confirm-backdrop board-settings-backdrop ${settingsOpening ? 'open' : ''}`} onMouseDown={() => { setEditingBoard(null); setFolderIconPickerOpen(false) }}>
+        <form className="board-settings" onMouseDown={event => event.stopPropagation()} onSubmit={saveBoardSettings}>
+          <p className="eyebrow">Настройки доски</p>
+          <h2>Период и название</h2>
+          <label>Название<input value={editingBoard.title} onChange={event => setEditingBoard({ ...editingBoard, title: event.target.value })} autoFocus /></label>
+          <div className="new-board-date"><label>С<input type="date" value={editingBoard.start_date} onChange={event => setEditingBoard({ ...editingBoard, start_date: event.target.value })} /></label><label>По<input type="date" min={editingBoard.start_date} value={editingBoard.end_date} onChange={event => setEditingBoard({ ...editingBoard, end_date: event.target.value })} /></label></div>
+          <label className="folder-icon-field">Иконка папки
+            <button type="button" className="folder-icon-picker-button" onClick={() => { if (!folderIconPickerOpen) setFolderIconDirectory(''); setFolderIconPickerOpen(current => !current) }}>
+              {boardFolderIcons.find(icon => icon.id === editingFolderIconId) && <img src={boardFolderIcons.find(icon => icon.id === editingFolderIconId)?.url} alt="" />}
+              <span>Выбрать иконку</span>
+            </button>
+          </label>
+          {folderIconPickerOpen && <div className="folder-icon-browser">
+            {folderIconDirectory && <button type="button" className="folder-icon-back" onClick={() => setFolderIconDirectory(current => current.split('/').slice(0, -1).join('/'))}>← Назад</button>}
+            <div className="folder-icon-options">
+              {folderIconEntries.directories.map(directory => <button type="button" key={directory.name} className="folder-icon-directory" onClick={() => setFolderIconDirectory(current => current ? `${current}/${directory.name}` : directory.name)} title={`Открыть папку «${directory.name}»`}>{directory.cover && <img src={directory.cover.url} alt="" />}<span>{directory.name}</span></button>)}
+              {folderIconEntries.icons.map(icon => <button type="button" key={icon.id} className={icon.id === editingFolderIconId ? 'selected' : ''} onClick={() => { setEditingFolderIconId(icon.id); setFolderIconPickerOpen(false) }} title={icon.label}><img src={icon.url} alt="" /><span>{icon.label}</span></button>)}
+            </div>
+          </div>}
+          <div className="board-settings-actions"><button type="button" className="danger" onClick={() => { setBoardToDelete(editingBoard); setEditingBoard(null); setFolderIconPickerOpen(false) }}>Удалить доску</button><span /><button type="button" onClick={() => { setEditingBoard(null); setFolderIconPickerOpen(false) }}>Отмена</button><button className="primary" disabled={savingSettings}>{savingSettings ? 'Сохраняю…' : 'Сохранить'}</button></div>
+        </form>
+      </div>}
+      {boardToDelete && <div className="confirm-backdrop"><div className="confirm-dialog"><p className="eyebrow">Удаление доски</p><h2>Удалить «{boardToDelete.title}»?</h2><p>Все карточки, связи и загруженные файлы этой доски будут удалены без возможности восстановления.</p><div><button onClick={() => setBoardToDelete(null)} disabled={deletingBoard}>Отмена</button><button className="confirm-delete" onClick={() => void deleteBoard()} disabled={deletingBoard}>{deletingBoard ? 'Удаляю…' : 'Удалить доску'}</button></div></div></div>}
+    </main>
+  )
 }
 
 export default function App() {
