@@ -195,7 +195,7 @@ header input { width: min(560px, calc(100vw - 180px)); color: #f7f2ff; font-weig
 .folder-icon-picker-button { display: flex; width: 100%; min-height: 46px; gap: 10px; align-items: center; margin-top: 5px; padding: 6px 9px; border: 1px solid #4a4454; border-radius: 9px; color: #eee8f5; background: #18161c; text-align: left; }
 .folder-icon-picker-button:hover { border-color: #8e7ab9; }
 .folder-icon-picker-button img { width: 37px; height: 28px; object-fit: contain; }
-.folder-icon-picker-button span { font-size: 12px; font-weight: 700; }
+.folder-icon-picker-button span { font-size: 12px; font-weight: 700; text-transform: capitalize; }
 .folder-icon-browser { margin-top: 7px; }
 .folder-icon-back { margin-bottom: 6px; padding: 4px 0; border: 0; color: #bbb2c6; background: transparent; font-size: 11px; font-weight: 700; }
 .folder-icon-back:hover { color: #fff; }
@@ -288,3 +288,36 @@ header input { width: min(560px, calc(100vw - 180px)); color: #f7f2ff; font-weig
 .theme-dark .board-card, .theme-light .board-card { border: 0; background-color: transparent; background-position: center; background-repeat: no-repeat; background-size: 100% 100%; box-shadow: none; }
 .board-grid { row-gap: 80px; }
 .board-card:has(.board-context-menu) { z-index: 30; }
+
+/* The object inspector follows the same window language as the board creator. */
+.editor:not(.welcome) { top: 76px; padding: 49px 20px 20px; overflow: hidden auto; border-color: #514a5d; border-radius: 15px; background: linear-gradient(155deg, rgba(43,40,51,.99), rgba(27,26,32,.99)); box-shadow: 0 22px 65px rgba(0,0,0,.28), 0 1px 0 rgba(255,255,255,.035) inset; }
+.editor:not(.welcome)::before { position: absolute; z-index: 0; inset: 0 0 auto; display: flex; height: 45px; align-items: center; padding-left: 42px; border-bottom: 1px solid #4a4551; content: attr(data-editor-title); color: #c9c1d6; background: rgba(16,15,20,.32); font-size: 12px; font-weight: 800; }
+.editor:not(.welcome) > *:not(.close) { position: relative; z-index: 1; }
+.editor:not(.welcome) .close { position: absolute; z-index: 2; top: 14px; left: 14px; right: auto; display: grid; width: 12px; height: 12px; place-items: center; padding: 0; border-radius: 50%; color: rgba(77,24,32,.88); background: #d96067; font-size: 11px; font-weight: 900; line-height: 1; opacity: 1; }
+.editor:not(.welcome) .close:hover, .editor:not(.welcome) .close:focus-visible { color: rgba(77,24,32,.88); background: #d96067; box-shadow: 0 0 0 1px rgba(255,255,255,.12) inset; outline: 0; }
+.editor-folder-icon-options { max-height: 190px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.editor-folder-icon-browser { margin-top: 7px; }
+.theme-light .editor:not(.welcome) { border-color: #a9cce5; background: linear-gradient(155deg, rgba(240,249,255,.98), rgba(210,234,249,.98)); box-shadow: 0 22px 65px rgba(47,112,160,.16), 0 1px 0 rgba(255,255,255,.9) inset; }
+.theme-light .editor:not(.welcome)::before { border-bottom-color: #bcd7e9; color: #42627d; background: rgba(255,255,255,.4); }
+.theme-light .editor:not(.welcome) .close { color: #42627d; }
+@media (max-width: 850px) { .editor:not(.welcome) { top: auto; bottom: 12px; } }
+
+/* Canvas folders reuse the same macOS folder artwork as the board library. */
+.folder-node { position: relative; display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; cursor: pointer; user-select: none; }
+.folder-image-hitbox { position: relative; width: 88%; height: calc(100% - 27px); margin: 4px auto 0; transform-origin: 50% 50%; transition: transform .32s cubic-bezier(.2,.8,.2,1); }
+.folder-image-hitbox > img { display: block; width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 9px 15px rgba(0,0,0,.22)); transition: filter .32s ease, opacity .32s ease; }
+.folder-image-hitbox:hover > img { filter: brightness(1.07) drop-shadow(0 12px 20px rgba(0,0,0,.3)); }
+.folder-node.open .folder-image-hitbox { transform: translateY(4px) scale(.82); }
+.folder-node.open .folder-image-hitbox > img { filter: brightness(.58) saturate(.76) drop-shadow(0 7px 12px rgba(0,0,0,.2)); opacity: .88; }
+.folder-node.selected .folder-image-hitbox > img { filter: brightness(1.08) drop-shadow(0 0 8px rgba(174,150,232,.7)) drop-shadow(0 12px 20px rgba(0,0,0,.32)); }
+.folder-node.selected.open .folder-image-hitbox > img { filter: brightness(.67) saturate(.78) drop-shadow(0 0 8px rgba(174,150,232,.65)); }
+.folder-node-title { position: absolute; right: 8px; bottom: 1px; left: 8px; overflow: hidden; color: #f4effb; font-size: 13px; font-weight: 800; line-height: 20px; text-align: center; text-overflow: ellipsis; text-shadow: 0 1px 4px rgba(0,0,0,.5); white-space: nowrap; }
+.folder-node-count { position: absolute; z-index: 3; top: 5px; right: 5px; display: grid; min-width: 23px; height: 23px; place-items: center; padding: 0 6px; border: 1px solid rgba(255,255,255,.65); border-radius: 999px; color: #14537b; background: rgba(238,251,255,.82); box-shadow: 0 2px 6px rgba(10,68,103,.2); font-size: 11px; font-weight: 900; line-height: 1; pointer-events: none; }
+.folder-drop-hint { position: absolute; z-index: 3; top: 52%; right: 12%; left: 12%; padding: 5px 7px; border-radius: 8px; color: #fff; background: rgba(8,61,96,.78); font-size: 10px; font-weight: 800; line-height: 1.15; text-align: center; pointer-events: none; animation: folder-drop-hint-in .16s ease-out both; }
+@keyframes folder-drop-hint-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+.folder-node-fallback { display: grid; width: 100%; height: 100%; place-items: center; border-radius: 16px; color: #e1f6ff; background: linear-gradient(155deg, #59c2ef, #278abf); font-size: 70px; }
+.theme-light .folder-node-title { color: #123a59; text-shadow: 0 1px 3px rgba(255,255,255,.8); }
+.react-flow__node.folder-member-opening > .memory-card, .react-flow__node.folder-member-opening > .canvas-object { animation: folder-member-explode .42s ease-out both; transform-origin: center; will-change: transform, opacity; }
+.react-flow__node.folder-member-closing > .memory-card, .react-flow__node.folder-member-closing > .canvas-object { animation: folder-member-collapse .3s cubic-bezier(.6,0,.84,.18) both; transform-origin: center; will-change: transform, opacity; pointer-events: none; }
+@keyframes folder-member-explode { 0% { opacity: 0; transform: translate(var(--folder-offset-x), var(--folder-offset-y)) scale(.16); } 100% { opacity: 1; transform: translate(0, 0) scale(1); } }
+@keyframes folder-member-collapse { 0% { opacity: 1; transform: translate(0, 0) scale(1); } 100% { opacity: .05; transform: translate(var(--folder-offset-x), var(--folder-offset-y)) scale(.16); } }

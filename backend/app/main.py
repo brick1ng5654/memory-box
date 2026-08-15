@@ -380,6 +380,19 @@ def get_node(node_id: int, db: Session = Depends(get_db)):
 @app.delete("/api/nodes/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_node(node_id: int, db: Session = Depends(get_db)):
     node = node_or_404(node_id, db)
+    # A folder stores its contents in object_data.  Clean references when a
+    # contained node is deleted so older databases remain valid without a
+    # destructive schema migration.
+    folders = db.scalars(select(MemoryNode).where(MemoryNode.board_id == node.board_id, MemoryNode.type == NodeType.folder)).all()
+    for folder in folders:
+        folder_data = dict(folder.object_data or {})
+        member_ids = folder_data.get("folder_member_ids")
+        if not isinstance(member_ids, list):
+            continue
+        next_member_ids = [member_id for member_id in member_ids if member_id != node.id]
+        if len(next_member_ids) != len(member_ids):
+            folder_data["folder_member_ids"] = next_member_ids
+            folder.object_data = folder_data
     for asset in node.media_assets:
         for file_path in (asset.storage_path, asset.preview_path):
             if file_path:

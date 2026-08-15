@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { addEdge, applyNodeChanges, Background, BackgroundVariant, BaseEdge, Connection, ConnectionMode, Edge, EdgeProps, getBezierPath, NodeChange, OnConnect, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState, useReactFlow } from '@xyflow/react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { addEdge, applyNodeChanges, Background, BackgroundVariant, BaseEdge, Connection, ConnectionMode, Edge, EdgeProps, getBezierPath, NodeChange, OnConnect, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState, useReactFlow, useUpdateNodeInternals } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { api, Asset, Board, MemoryEdge, MemoryNode, NodeType, mediaUrl } from './api'
 import MemoryCard, { FlowMemoryNode } from './MemoryCard'
@@ -11,18 +11,43 @@ const formatDate = (value: string) => new Intl.DateTimeFormat('ru-RU', { day: 'n
 const formatPeriod = (board: Pick<Board, 'start_date' | 'end_date'>) => board.start_date === board.end_date ? formatDate(board.start_date) : `${formatDate(board.start_date)} — ${formatDate(board.end_date)}`
 const toDateKey = (value: Date) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
 const todayKey = () => toDateKey(new Date())
-const defaultNodeWidth = (node: MemoryNode) => node.type === 'media' ? 300 : node.type === 'track' ? node.track_data?.cover_size === 'large' ? 320 : 340 : 230
-const defaultNodeHeight = (node: MemoryNode) => node.type === 'media' ? 260 : node.type === 'track' ? node.track_data?.cover_size === 'large' ? node.track_data?.kind === 'playlist' ? 320 : 390 : node.track_data?.kind === 'playlist' ? 220 : 180 : undefined
+const defaultNodeWidth = (node: MemoryNode) => node.type === 'folder' ? 220 : node.type === 'media' ? 300 : node.type === 'track' ? node.track_data?.cover_size === 'large' ? 320 : 340 : 230
+const defaultNodeHeight = (node: MemoryNode) => node.type === 'folder' ? 165 : node.type === 'media' ? 260 : node.type === 'track' ? node.track_data?.cover_size === 'large' ? node.track_data?.kind === 'playlist' ? 320 : 390 : node.track_data?.kind === 'playlist' ? 220 : 180 : undefined
 const clipboardMediaExtensions: Record<string, string> = {
   'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
   'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/x-m4v': 'm4v',
 }
 type Theme = 'dark' | 'light'
+type FolderTransition = 'opening' | 'closing'
+type DragGroup = { origin: { x: number; y: number }; positions: Record<number, { x: number; y: number }> }
 
-const toFlowNode = (node: MemoryNode, onOpenMedia: (assets: Asset[], index: number) => void, onObjectChange?: (patch: Partial<MemoryNode>) => void, onPlaylistToggle?: (id: number) => void, theme: Theme = 'dark'): FlowMemoryNode => ({
+const folderMemberIds = (node: MemoryNode) => node.type === 'folder' && Array.isArray(node.object_data?.folder_member_ids)
+  ? [...new Set(node.object_data.folder_member_ids.filter((id): id is number => Number.isInteger(id) && id > 0))]
+  : []
+const folderIsOpen = (node: MemoryNode) => node.type === 'folder' && node.object_data?.folder_open === true
+const folderPresentation = (node: MemoryNode, allNodes: MemoryNode[], transitions: Record<number, FolderTransition>) => {
+  if (node.type === 'folder') return { hidden: false, className: '', style: {} as CSSProperties }
+  const folder = allNodes.find(candidate => candidate.type === 'folder' && folderMemberIds(candidate).includes(node.id))
+  if (!folder) return { hidden: false, className: '', style: {} as CSSProperties }
+  const transition = transitions[folder.id]
+  const visible = folderIsOpen(folder) || Boolean(transition)
+  const folderWidth = folder.width ?? defaultNodeWidth(folder)
+  const folderHeight = folder.height ?? defaultNodeHeight(folder) ?? 165
+  const nodeWidth = node.width ?? defaultNodeWidth(node)
+  const nodeHeight = node.height ?? defaultNodeHeight(node) ?? 180
+  const offsetX = folder.position_x + folderWidth / 2 - node.position_x - nodeWidth / 2
+  const offsetY = folder.position_y + folderHeight / 2 - node.position_y - nodeHeight / 2
+  return {
+    hidden: !visible,
+    className: transition ? `folder-member-${transition}` : '',
+    style: { '--folder-offset-x': `${offsetX}px`, '--folder-offset-y': `${offsetY}px` } as CSSProperties,
+  }
+}
+
+const toFlowNode = (node: MemoryNode, onOpenMedia: (assets: Asset[], index: number) => void, onObjectChange?: (patch: Partial<MemoryNode>) => void, onPlaylistToggle?: (id: number) => void, onFolderToggle?: (id: number) => void, theme: Theme = 'dark'): FlowMemoryNode => ({
   id: String(node.id), type: 'memory', position: { x: node.position_x, y: node.position_y },
   style: { width: node.width ?? defaultNodeWidth(node), height: node.height ?? defaultNodeHeight(node), zIndex: node.z_index },
-  data: { ...node, onOpenMedia, onObjectChange, onPlaylistToggle: onPlaylistToggle ? () => onPlaylistToggle(node.id) : undefined, theme },
+  data: { ...node, onOpenMedia, onObjectChange, onPlaylistToggle: onPlaylistToggle ? () => onPlaylistToggle(node.id) : undefined, onFolderToggle: onFolderToggle ? () => onFolderToggle(node.id) : undefined, theme },
 })
 const toFlowEdge = (edge: MemoryEdge): Edge => ({
   id: String(edge.id), type: 'memory', source: String(edge.source_node_id), sourceHandle: edge.source_handle || 'right', target: String(edge.target_node_id), targetHandle: edge.target_handle || 'left', label: edge.label || undefined,
@@ -38,6 +63,7 @@ const edgeTypes = { memory: MemoryBezierEdge }
 
 function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: number; onHome: () => void; theme: Theme; onToggleTheme: () => void }) {
   const { screenToFlowPosition, setCenter } = useReactFlow()
+  const updateNodeInternals = useUpdateNodeInternals()
   const [board, setBoard] = useState<Board | null>(null)
   const [nodes, setNodes] = useNodesState<FlowMemoryNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
@@ -68,9 +94,53 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
   const objectChangeRef = useRef<(id: string, patch: Partial<MemoryNode>) => void>(() => {})
   const objectSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const objectSyncPatchesRef = useRef<Record<string, Partial<MemoryNode>>>({})
+  const folderToggleRef = useRef<(id: number) => void>(() => {})
+  const folderTransitionsRef = useRef<Record<number, FolderTransition>>({})
+  const folderTransitionTimersRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
+  const folderDropTargetRef = useRef<number | null>(null)
+  const draggedGroupRef = useRef<DragGroup | null>(null)
   const themeRef = useRef(theme)
   themeRef.current = theme
   const objectChange = useCallback((id: number, patch: Partial<MemoryNode>) => objectChangeRef.current(String(id), patch), [])
+  const toggleFolder = useCallback((id: number) => folderToggleRef.current(id), [])
+  const applyFolderPresentation = useCallback((allNodes: MemoryNode[], transitions = folderTransitionsRef.current) => {
+    const presentations = new Map(allNodes.map(node => [node.id, folderPresentation(node, allNodes, transitions)]))
+    const hiddenNodeIds = new Set([...presentations.entries()].filter(([, presentation]) => presentation.hidden).map(([id]) => id))
+    const transitioningNodeIds = new Set([...presentations.entries()].filter(([, presentation]) => Boolean(presentation.className)).map(([id]) => id))
+    const transitionByNodeId = new Map<number, FolderTransition>()
+    for (const [id, presentation] of presentations) {
+      if (presentation.className === 'folder-member-opening') transitionByNodeId.set(id, 'opening')
+      if (presentation.className === 'folder-member-closing') transitionByNodeId.set(id, 'closing')
+    }
+    setNodes(current => current.map(node => {
+      const presentation = presentations.get(Number(node.id))
+      return presentation ? { ...node, hidden: presentation.hidden, className: presentation.className, style: { ...node.style, ...presentation.style } } : node
+    }))
+    setEdges(current => current.map((edge, index) => {
+      // Карточки смещаются CSS-анимацией, а React Flow рассчитывает ребро по
+      // статичным координатам. Во время движения оставляем маршрут неизменным,
+      // плавно убирая линию; после раскрытия она так же плавно появляется.
+      const transition = transitionByNodeId.get(Number(edge.source)) || transitionByNodeId.get(Number(edge.target))
+      const hidden = !transition && (hiddenNodeIds.has(Number(edge.source)) || hiddenNodeIds.has(Number(edge.target)))
+      const isOpening = transition === 'opening'
+      const isClosing = transition === 'closing'
+      const shouldDraw = !transition && edge.data?.folderDrawing === true && !hidden
+      return {
+        ...edge,
+        hidden,
+        data: { ...edge.data, folderDrawing: isOpening },
+        style: {
+          ...edge.style,
+          display: hidden ? 'none' : undefined,
+          opacity: hidden ? 0 : 1,
+          strokeDasharray: '2000',
+          strokeDashoffset: isOpening || hidden ? '2000' : isClosing ? '-2000' : '0',
+          transition: `stroke-dashoffset ${isClosing ? 260 : 360}ms cubic-bezier(.2,.72,.3,1) ${shouldDraw ? index * 55 : 0}ms`,
+        },
+      }
+    }))
+    if (transitioningNodeIds.size === 0) requestAnimationFrame(() => updateNodeInternals(allNodes.map(node => String(node.id))))
+  }, [setEdges, setNodes, updateNodeInternals])
   const previewTextFont = useCallback((id: number, fontFamily: string | null) => {
     setNodes(current => current.map(node => node.id === String(id) ? {
       ...node,
@@ -86,15 +156,16 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
     try {
       const next = await api.board(boardId)
       setBoard(next)
-      setNodes(next.nodes.map(node => toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen, themeRef.current)))
+      setNodes(next.nodes.map(node => toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen, toggleFolder, themeRef.current)))
       setEdges(next.edges.map(toFlowEdge))
+      applyFolderPresentation(next.nodes)
       const datedNodes = next.nodes.filter(node => node.temporal_date).sort((left, right) => (left.temporal_date || '').localeCompare(right.temporal_date || '') || left.id - right.id)
       const focusNode = datedNodes[0] || next.nodes[0]
       if (focusNode) setInitialFocus({ x: focusNode.position_x + (focusNode.width ?? defaultNodeWidth(focusNode)) / 2, y: focusNode.position_y + (focusNode.height ?? defaultNodeHeight(focusNode) ?? 180) / 2 })
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Не удалось загрузить холст')
     } finally { setLoading(false) }
-  }, [boardId, openMedia, setEdges, setNodes, togglePlaylistOpen])
+  }, [applyFolderPresentation, boardId, openMedia, setEdges, setNodes, toggleFolder, togglePlaylistOpen])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -106,6 +177,11 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
     return () => cancelAnimationFrame(frame)
   }, [initialFocus, loading, setCenter])
   useEffect(() => { nodesRef.current = nodes }, [nodes])
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(''), 10_000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { if (deleteDialog) requestAnimationFrame(() => confirmButton.current?.focus()) }, [deleteDialog])
   useEffect(() => {
@@ -159,6 +235,152 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
       media_assets: preserveExistingMedia && updated.media_assets.length === 0 && current.media_assets.length > 0 ? current.media_assets : updated.media_assets,
     } : current)
   }, [objectChange, openMedia, setNodes])
+  const currentCanvasNodes = () => nodesRef.current.map(node => ({ ...node.data, position_x: node.position.x, position_y: node.position.y }) as MemoryNode)
+  const setFolderTransition = (folderId: number, transition?: FolderTransition) => {
+    const next = { ...folderTransitionsRef.current }
+    if (transition) next[folderId] = transition
+    else delete next[folderId]
+    folderTransitionsRef.current = next
+  }
+  const finishFolderTransition = (folderId: number) => {
+    const timer = folderTransitionTimersRef.current[folderId]
+    if (timer) clearTimeout(timer)
+    delete folderTransitionTimersRef.current[folderId]
+    setFolderTransition(folderId)
+    applyFolderPresentation(currentCanvasNodes())
+  }
+  const saveFolderMembers = async (folderId: number, requestedMemberIds: number[], createdFolder?: MemoryNode, sourceNodes?: MemoryNode[]) => {
+    const currentNodes = sourceNodes || currentCanvasNodes()
+    const allNodes = currentNodes.some(node => node.id === folderId) ? currentNodes : [...currentNodes, createdFolder].filter((node): node is MemoryNode => Boolean(node))
+    const folder = allNodes.find(node => node.id === folderId && node.type === 'folder')
+    if (!folder) return false
+    const availableIds = new Set(allNodes.filter(node => node.type !== 'folder').map(node => node.id))
+    const memberIds = [...new Set(requestedMemberIds.filter(id => availableIds.has(id) && id !== folderId))]
+    const memberSet = new Set(memberIds)
+    const nextFolder = { ...folder, object_data: { ...(folder.object_data || {}), folder_member_ids: memberIds, folder_open: folderIsOpen(folder) } }
+    const changedFolders = allNodes.filter(node => node.type === 'folder' && node.id !== folderId && folderMemberIds(node).some(memberId => memberSet.has(memberId))).map(node => ({
+      ...node,
+      object_data: { ...(node.object_data || {}), folder_member_ids: folderMemberIds(node).filter(memberId => !memberSet.has(memberId)), folder_open: folderIsOpen(node) },
+    }))
+    try {
+      const saved = await Promise.all([nextFolder, ...changedFolders].map(node => api.updateNode(node.id, { object_data: node.object_data })))
+      const savedById = new Map(saved.map(node => [node.id, node]))
+      saved.forEach(node => replaceNode(node))
+      const nextNodes = allNodes.map(node => savedById.get(node.id) || node)
+      applyFolderPresentation(nextNodes)
+      return true
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось изменить содержимое папки'); return false }
+  }
+  const createFolderFromSelection = async (ids: number[]) => {
+    const currentNodes = currentCanvasNodes()
+    const members = currentNodes.filter(node => ids.includes(node.id) && node.type !== 'folder')
+    if (!members.length) { setNotice('Выберите хотя бы один объект, который нужно поместить в папку'); return }
+    const position = {
+      x: Math.min(...members.map(node => node.position_x)) - 18,
+      y: Math.min(...members.map(node => node.position_y)) - 24,
+    }
+    const folder = await create('folder', position, { title: 'Папка' })
+    if (folder) await saveFolderMembers(folder.id, members.map(node => node.id), folder)
+  }
+  const folderForDroppedNode = (flowNode: FlowMemoryNode) => {
+    if (flowNode.data.type === 'folder') return undefined
+    const currentNodes = currentCanvasNodes().map(node => node.id === Number(flowNode.id) ? { ...node, position_x: flowNode.position.x, position_y: flowNode.position.y } : node)
+    const droppedNode = currentNodes.find(node => node.id === Number(flowNode.id))
+    if (!droppedNode) return undefined
+    const nodeWidth = droppedNode.width ?? defaultNodeWidth(droppedNode)
+    const nodeHeight = droppedNode.height ?? defaultNodeHeight(droppedNode) ?? 180
+    const nodeCenter = { x: droppedNode.position_x + nodeWidth / 2, y: droppedNode.position_y + nodeHeight / 2 }
+    return currentNodes.filter(node => node.type === 'folder').sort((left, right) => right.z_index - left.z_index).find(folder => {
+      const nodeWidth = folder.width ?? defaultNodeWidth(folder)
+      const fullWidth = nodeWidth * .88
+      const fullHeight = (folder.height ?? defaultNodeHeight(folder) ?? 165) - 27
+      const scale = folderIsOpen(folder) ? .82 : 1
+      const left = folder.position_x + nodeWidth * .06 + fullWidth * (1 - scale) / 2
+      const top = folder.position_y + 4 + fullHeight * (1 - scale) / 2 + (folderIsOpen(folder) ? 4 : 0)
+      return nodeCenter.x >= left && nodeCenter.x <= left + fullWidth * scale && nodeCenter.y >= top && nodeCenter.y <= top + fullHeight * scale
+    })
+  }
+  const setFolderDropTarget = (folderId: number | null) => {
+    if (folderDropTargetRef.current === folderId) return
+    folderDropTargetRef.current = folderId
+    setNodes(current => current.map(node => node.data.type !== 'folder' ? node : {
+      ...node,
+      data: { ...node.data, isFolderDropTarget: Number(node.id) === folderId },
+    }))
+  }
+  const updateFolderDropTarget = (flowNode: FlowMemoryNode) => setFolderDropTarget(folderForDroppedNode(flowNode)?.id ?? null)
+  const addDroppedNodesToFolder = async (flowNode: FlowMemoryNode, dragGroup: DragGroup | null) => {
+    const targetFolder = folderForDroppedNode(flowNode)
+    const draggedId = Number(flowNode.id)
+    const delta = dragGroup ? { x: flowNode.position.x - dragGroup.origin.x, y: flowNode.position.y - dragGroup.origin.y } : { x: 0, y: 0 }
+    const currentNodes = currentCanvasNodes().map(node => {
+      const start = dragGroup?.positions[node.id]
+      if (start) return { ...node, position_x: start.x + delta.x, position_y: start.y + delta.y }
+      return node.id === draggedId ? { ...node, position_x: flowNode.position.x, position_y: flowNode.position.y } : node
+    })
+    const movedNodes = currentNodes.filter(node => dragGroup ? Boolean(dragGroup.positions[node.id]) : node.id === draggedId)
+    const droppedNodes = movedNodes.filter(node => node.type !== 'folder')
+    if (!movedNodes.length) return
+    if (!targetFolder) {
+      await Promise.all(movedNodes.map(node => syncNode(String(node.id), { position_x: node.position_x, position_y: node.position_y })))
+      return
+    }
+    if (!droppedNodes.length) {
+      await Promise.all(movedNodes.map(node => syncNode(String(node.id), { position_x: node.position_x, position_y: node.position_y })))
+      return
+    }
+    const existingMembers = new Set(folderMemberIds(targetFolder))
+    const nodesToAdd = droppedNodes.filter(node => !existingMembers.has(node.id))
+    if (!nodesToAdd.length) {
+      await Promise.all(droppedNodes.map(node => syncNode(String(node.id), { position_x: node.position_x, position_y: node.position_y })))
+      return
+    }
+    const nextMemberIds = [...existingMembers, ...nodesToAdd.map(node => node.id)]
+    const optimisticFolder = { ...targetFolder, object_data: { ...(targetFolder.object_data || {}), folder_member_ids: nextMemberIds, folder_open: folderIsOpen(targetFolder) } }
+    const optimisticNodes = currentNodes.map(node => node.id === targetFolder.id ? optimisticFolder : node)
+    // Make the drop immediate, including hiding every edge that touches the group.
+    replaceNode(optimisticFolder)
+    applyFolderPresentation(optimisticNodes)
+    void Promise.all(movedNodes.map(node => syncNode(String(node.id), { position_x: node.position_x, position_y: node.position_y })))
+    const saved = await saveFolderMembers(targetFolder.id, nextMemberIds, undefined, optimisticNodes)
+    if (saved) setNotice(`${nodesToAdd.length > 1 ? 'Объекты добавлены' : 'Объект добавлен'} в папку «${targetFolder.title || 'Папка'}»`)
+  }
+  folderToggleRef.current = (folderId: number) => {
+    if (folderTransitionTimersRef.current[folderId]) return
+    const currentNodes = currentCanvasNodes()
+    const folder = currentNodes.find(node => node.id === folderId && node.type === 'folder')
+    if (!folder) return
+    const nextOpen = !folderIsOpen(folder)
+    const nextFolder = { ...folder, object_data: { ...(folder.object_data || {}), folder_member_ids: folderMemberIds(folder), folder_open: nextOpen } }
+    const nextNodes = currentNodes.map(node => node.id === folderId ? nextFolder : node)
+    const persist = async () => {
+      try {
+        const saved = await api.updateNode(folderId, { object_data: nextFolder.object_data, position_x: folder.position_x, position_y: folder.position_y })
+        replaceNode(saved)
+        applyFolderPresentation(nextNodes.map(node => node.id === folderId ? saved : node))
+      } catch (error) {
+        replaceNode(folder)
+        applyFolderPresentation(currentNodes)
+        setNotice(error instanceof Error ? error.message : 'Не удалось изменить состояние папки')
+      }
+    }
+    if (nextOpen) {
+      setFolderTransition(folderId, 'opening')
+      replaceNode(nextFolder)
+      applyFolderPresentation(nextNodes)
+      void persist()
+      folderTransitionTimersRef.current[folderId] = window.setTimeout(() => finishFolderTransition(folderId), 440)
+      return
+    }
+    setFolderTransition(folderId, 'closing')
+    applyFolderPresentation(currentNodes)
+    folderTransitionTimersRef.current[folderId] = window.setTimeout(() => {
+      delete folderTransitionTimersRef.current[folderId]
+      replaceNode(nextFolder)
+      applyFolderPresentation(nextNodes)
+      void persist().finally(() => finishFolderTransition(folderId))
+    }, 300)
+  }
   const setLayer = async (ids: number[], direction: 'front' | 'back') => {
     if (!board || !ids.length) return
     const selectedSet = new Set(ids)
@@ -188,7 +410,10 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
       setSelected(current => current?.id === saved.id ? { ...saved, ...current, ...data } : current)
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось сохранить изменения') }
   }, [objectChange, openMedia, setNodes])
-  useEffect(() => () => Object.values(objectSyncTimersRef.current).forEach(timer => clearTimeout(timer)), [])
+  useEffect(() => () => {
+    Object.values(objectSyncTimersRef.current).forEach(timer => clearTimeout(timer))
+    Object.values(folderTransitionTimersRef.current).forEach(timer => clearTimeout(timer))
+  }, [])
   objectChangeRef.current = (id, patch) => {
     const numericId = Number(id)
     setNodes(current => current.map(node => node.id === id ? { ...node, data: { ...node.data, ...patch } } : node))
@@ -273,16 +498,18 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
     try {
       const index = nodes.length
       const media = type === 'media'
+      const folder = type === 'folder'
       const node = await api.createNode(board.id, {
         type, title: source?.title || '', text_content: source?.text_content,
         position_x: position?.x ?? 100 + index * 40, position_y: position?.y ?? 120 + index * 30, z_index: Math.max(0, ...nodes.map(item => item.data.z_index)) + 1,
-        width: source?.width ?? (media ? 300 : type === 'note' ? 230 : type === 'canvas_text' ? 380 : type === 'canvas_image' ? 260 : undefined), height: source?.height ?? (media ? 260 : type === 'canvas_text' ? 100 : type === 'canvas_image' ? 260 : undefined),
+        width: source?.width ?? (folder ? 220 : media ? 300 : type === 'note' ? 230 : type === 'canvas_text' ? 380 : type === 'canvas_image' ? 260 : undefined), height: source?.height ?? (folder ? 165 : media ? 260 : type === 'note' ? 140 : type === 'canvas_text' ? 100 : type === 'canvas_image' ? 260 : undefined),
         temporal_date: source?.temporal_date,
         show_date: source?.show_date ?? true, show_type_label: source?.show_type_label ?? false, date_position: source?.date_position ?? 'bottom-center', title_position: source?.title_position ?? 'bottom-center',
         track_data: type === 'track' ? source?.track_data || { title: '', artist: '', kind: 'track', cover_size: 'small', playlist_items: [], collapsed_item_limit: 3, show_timeline: false, duration_seconds: 0, hide_details: false } : undefined,
-        object_data: source?.object_data ?? (type === 'canvas_text' ? { text: 'Текст', font_size: 42, font_family: "Inter, 'Segoe UI', Arial, sans-serif" } : undefined),
+        object_data: folder ? { folder_member_ids: [], folder_open: false } : source?.object_data ?? (type === 'canvas_text' ? { text: 'Текст', font_size: 42, font_family: "Inter, 'Segoe UI', Arial, sans-serif" } : undefined),
       })
-      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen, theme), selected: true }])
+      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen, toggleFolder, theme), selected: true }])
+      applyFolderPresentation([...nodesRef.current.map(item => item.data), node])
       setBoard(current => current ? { ...current, nodes: [...current.nodes, node] } : current)
       selectionRef.current = [node.id]
       setSelected(node); setSelectedIds([node.id])
@@ -351,7 +578,12 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
   }, [board, nodes, screenToFlowPosition])
   const save = async (draft: Partial<MemoryNode>, files: File[] = []) => {
     if (!selected) return
-    const updated = await api.updateNode(selected.id, { title: draft.title, text_content: draft.text_content, temporal_date: draft.temporal_date, show_date: draft.show_date, show_type_label: draft.show_type_label, date_position: draft.date_position, track_data: draft.track_data, object_data: draft.object_data })
+    const patch: Partial<MemoryNode> = { title: draft.title, text_content: draft.text_content, temporal_date: draft.temporal_date, show_date: draft.show_date, show_type_label: draft.show_type_label, date_position: draft.date_position, track_data: draft.track_data }
+    if (draft.object_data !== undefined) {
+      const latestFolder = selected.type === 'folder' ? board?.nodes.find(node => node.id === selected.id) : undefined
+      patch.object_data = latestFolder ? { ...(latestFolder.object_data || {}), ...draft.object_data } : draft.object_data
+    }
+    const updated = await api.updateNode(selected.id, patch)
     // Metadata saves must not erase a file that was uploaded concurrently.
     replaceNode(updated, true)
     const errors: string[] = []
@@ -369,17 +601,28 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
   const remove = async () => {
     if (!selectedIds.length) return
     const ids = new Set(selectedIds)
-    await Promise.all([...ids].map(id => api.deleteNode(id)))
-    setNodes(current => current.filter(node => !ids.has(Number(node.id))))
+    // Delete sequentially: each server-side deletion safely updates folder membership.
+    for (const id of ids) await api.deleteNode(id)
+    setNodes(current => current.filter(node => !ids.has(Number(node.id))).map(node => node.data.type !== 'folder' ? node : {
+      ...node,
+      data: { ...node.data, object_data: { ...(node.data.object_data || {}), folder_member_ids: folderMemberIds(node.data).filter(memberId => !ids.has(memberId)) } },
+    }))
     setEdges(current => current.filter(edge => !ids.has(Number(edge.source)) && !ids.has(Number(edge.target))))
-    setBoard(current => current ? { ...current, nodes: current.nodes.filter(node => !ids.has(node.id)), edges: current.edges.filter(edge => !ids.has(edge.source_node_id) && !ids.has(edge.target_node_id)) } : current)
+    setBoard(current => current ? {
+      ...current,
+      nodes: current.nodes.filter(node => !ids.has(node.id)).map(node => node.type !== 'folder' ? node : {
+        ...node,
+        object_data: { ...(node.object_data || {}), folder_member_ids: folderMemberIds(node).filter(memberId => !ids.has(memberId)) },
+      }),
+      edges: current.edges.filter(edge => !ids.has(edge.source_node_id) && !ids.has(edge.target_node_id)),
+    } : current)
     setSelected(null); setSelectedIds([])
   }
   const duplicate = async (source: MemoryNode) => {
     if ((source.type !== 'media' && source.type !== 'canvas_image') || !board) return create(source.type, { x: source.position_x + 40, y: source.position_y + 40 }, source)
     try {
       const node = await api.duplicateMediaNode(source.id, { position_x: source.position_x + 40, position_y: source.position_y + 40, z_index: Math.max(0, ...nodes.map(item => item.data.z_index)) + 1 })
-      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen, theme), selected: true }])
+      setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen, toggleFolder, theme), selected: true }])
       setBoard(current => current ? { ...current, nodes: [...current.nodes, node] } : current)
       selectionRef.current = [node.id]
       setSelected(node); setSelectedIds([node.id])
@@ -438,23 +681,36 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
   if (!board) return <main className="loading error">{notice || 'Доска недоступна'}</main>
   const activeAsset = lightbox?.assets[lightbox.index]
   const dotSize = Math.min(9, Math.max(1.35, 1.7 / zoom))
+  const contextMenuNodes = contextMenu?.nodeIds?.map(id => board.nodes.find(node => node.id === id)).filter((node): node is MemoryNode => Boolean(node)) || []
+  const contextFolder = contextMenuNodes.filter(node => node.type === 'folder').length === 1 ? contextMenuNodes.find(node => node.type === 'folder') : undefined
+  const contextObjects = contextMenuNodes.filter(node => node.type !== 'folder')
+  const folderMemberSet = new Set(contextFolder ? folderMemberIds(contextFolder) : [])
+  const objectsToAddToFolder = contextObjects.filter(node => !folderMemberSet.has(node.id)).map(node => node.id)
+  const foldersWithContextMembers = board.nodes.filter(folder => folder.type === 'folder' && contextObjects.some(node => folderMemberIds(folder).includes(node.id)))
+  const removeContextObjectsFromFolders = async () => {
+    const selectedObjectIds = new Set(contextObjects.map(node => node.id))
+    for (const folder of foldersWithContextMembers) {
+      await saveFolderMembers(folder.id, folderMemberIds(folder).filter(id => !selectedObjectIds.has(id)))
+    }
+  }
+  const containingFolderForContextNode = contextMenu?.nodeId ? board.nodes.find(node => node.type === 'folder' && folderMemberIds(node).includes(contextMenu.nodeId!)) : undefined
 
   return <main className={`app theme-${theme}`} onClick={() => setContextMenu(null)}>
     <header><div><input aria-label="Название доски" value={board.title} onChange={event => setBoard({ ...board, title: event.target.value })} onBlur={async () => { try { await api.renameBoard(board.id, board.title) } catch { setNotice('Не удалось сохранить название') } }} /></div><div className="header-actions"><button className="theme-toggle" onClick={onToggleTheme} aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}>{theme === 'dark' ? '☀' : '☾'}</button><button className="boards-link" onClick={onHome}>Все доски</button></div></header>
     {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
     <input ref={imageInputRef} className="visually-hidden" type="file" accept="image/png,.png" onChange={event => { const file = event.target.files?.[0]; const position = pendingImagePositionRef.current; event.currentTarget.value = ''; if (file && position) void createPng(file, position) }} />
     <section ref={canvasRef} className="canvas-wrap" onPointerMoveCapture={event => { canvasPointerRef.current = { x: event.clientX, y: event.clientY } }} onMouseDownCapture={event => { if (event.button === 2) contextSelectionRef.current = { nodeIds: nodes.filter(node => node.selected).map(node => Number(node.id)), edgeIds: edges.filter(edge => edge.selected).map(edge => Number(edge.id)) } }} onContextMenuCapture={event => { const target = event.target as HTMLElement; const nodeElement = target.closest<HTMLElement>('.react-flow__node'); const edgeElement = target.closest<HTMLElement>('.react-flow__edge'); const nodeId = Number(nodeElement?.dataset.id); const edgeId = Number(edgeElement?.dataset.id); openContextMenu(event, Number.isFinite(nodeId) ? nodeId : undefined, Number.isFinite(edgeId) ? [edgeId] : undefined) }}>
-      <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onSelectionChange={onSelectionChange} onNodeClick={(_, node) => { setSelected(node.data); setSelectedIds([Number(node.id)]); setSelectedEdgeIds([]) }} onEdgeClick={(_, edge) => { setSelectedEdgeIds([Number(edge.id)]); setSelected(null); setSelectedIds([]) }} onNodeContextMenu={(event, node) => openContextMenu(event, Number(node.id))} onEdgeContextMenu={(event, edge) => { const id = Number(edge.id); openContextMenu(event, undefined, selectedEdgeIds.length > 1 && selectedEdgeIds.includes(id) ? selectedEdgeIds : [id]) }} onPaneContextMenu={event => openContextMenu(event)} onPaneClick={() => { setSelected(null); setSelectedIds([]); setSelectedEdgeIds([]) }} onNodeDragStop={(_, node) => void syncNode(node.id, { position_x: node.position.x, position_y: node.position.y })} onConnectStart={(_, params) => { connectionSourceRef.current = params.nodeId; setConnectionCandidate(null) }} onConnectEnd={() => { connectionSourceRef.current = null; setConnectionCandidate(null) }} onMouseMove={onConnectionPointerMove} onConnect={onConnect} onMove={(_, viewport) => { if (Math.abs(viewport.zoom - zoomRef.current) >= 0.02) { zoomRef.current = viewport.zoom; setZoom(viewport.zoom) } }} nodeTypes={nodeTypes} edgeTypes={edgeTypes} deleteKeyCode={null} connectionMode={ConnectionMode.Loose} connectionRadius={32} proOptions={{ hideAttribution: true }} onlyRenderVisibleElements minZoom={0.2} maxZoom={2} defaultEdgeOptions={{ type: 'memory' }}>
+      <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onSelectionChange={onSelectionChange} onNodeClick={(_, node) => { const latest = nodesRef.current.find(item => item.id === node.id)?.data || node.data; setSelected(latest); setSelectedIds([Number(node.id)]); setSelectedEdgeIds([]) }} onEdgeClick={(_, edge) => { setSelectedEdgeIds([Number(edge.id)]); setSelected(null); setSelectedIds([]) }} onNodeContextMenu={(event, node) => openContextMenu(event, Number(node.id))} onEdgeContextMenu={(event, edge) => { const id = Number(edge.id); openContextMenu(event, undefined, selectedEdgeIds.length > 1 && selectedEdgeIds.includes(id) ? selectedEdgeIds : [id]) }} onPaneContextMenu={event => openContextMenu(event)} onPaneClick={() => { setSelected(null); setSelectedIds([]); setSelectedEdgeIds([]) }} onNodeDragStart={(_, node) => { const selectedNodes = nodesRef.current.filter(item => item.selected); const group = selectedNodes.some(item => item.id === node.id) ? selectedNodes : [node]; draggedGroupRef.current = { origin: { ...node.position }, positions: Object.fromEntries(group.map(item => [Number(item.id), { ...item.position }])) }; updateFolderDropTarget(node) }} onNodeDrag={(_, node) => updateFolderDropTarget(node)} onNodeDragStop={(_, node) => { const dragGroup = draggedGroupRef.current; draggedGroupRef.current = null; setFolderDropTarget(null); void addDroppedNodesToFolder(node, dragGroup) }} onConnectStart={(_, params) => { connectionSourceRef.current = params.nodeId; setConnectionCandidate(null) }} onConnectEnd={() => { connectionSourceRef.current = null; setConnectionCandidate(null) }} onMouseMove={onConnectionPointerMove} onConnect={onConnect} onMove={(_, viewport) => { if (Math.abs(viewport.zoom - zoomRef.current) >= 0.02) { zoomRef.current = viewport.zoom; setZoom(viewport.zoom) } }} nodeTypes={nodeTypes} edgeTypes={edgeTypes} deleteKeyCode={null} connectionMode={ConnectionMode.Loose} connectionRadius={32} proOptions={{ hideAttribution: true }} onlyRenderVisibleElements minZoom={0.2} maxZoom={2} defaultEdgeOptions={{ type: 'memory' }}>
         <Background variant={BackgroundVariant.Dots} color={theme === 'light' ? '#d2cadb' : '#484252'} gap={20} size={dotSize} />
       </ReactFlow>
       <div className="timeline"><span>{formatPeriod(board)}</span><div className="timeline-scroll" onWheel={event => { if (event.deltaY) { event.currentTarget.scrollLeft += event.deltaY; event.preventDefault() } }}><div className="timeline-days">{days.map(date => { const datedNodes = board.nodes.filter(node => node.temporal_date === date); const bookmarks = datedNodes.length < 2 ? [] : datedNodes.filter((_, index) => index % 2 === 0).slice(0, 5); const day = Number(date.slice(8)); return <i key={date}><b className="timeline-bookmarks">{bookmarks.map((node, index) => <em key={node.id} className={`timeline-bookmark ${node.type}`} style={{ bottom: index * 9 }} title={node.title || node.track_data?.title || 'Воспоминание'} />)}</b><small>{day}</small></i> })}</div></div></div>
     </section>
-    {selected && ['note', 'media', 'track', 'canvas_text', 'canvas_image'].includes(selected.type) && <Editor node={selected} boardStartDate={board.start_date} boardEndDate={board.end_date} theme={theme} onClose={closeEditor} onSave={save} onRequestDelete={() => setDeleteDialog(true)} onDeleteAsset={removeAsset} onUpdateAsset={updateAsset} onReorderAssets={reorderAssets} onPreview={preview} onTextChange={object_data => objectChange(selected.id, { object_data })} onTextPreview={fontFamily => previewTextFont(selected.id, fontFamily)} onCreate={create} />}
+    {selected && ['note', 'media', 'track', 'canvas_text', 'canvas_image', 'folder'].includes(selected.type) && <Editor node={selected} boardStartDate={board.start_date} boardEndDate={board.end_date} theme={theme} onClose={closeEditor} onSave={save} onRequestDelete={() => setDeleteDialog(true)} onDeleteAsset={removeAsset} onUpdateAsset={updateAsset} onReorderAssets={reorderAssets} onPreview={preview} onTextChange={object_data => objectChange(selected.id, { object_data })} onTextPreview={fontFamily => previewTextFont(selected.id, fontFamily)} onCreate={create} />}
     {contextMenu && <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}>
       {contextMenu.edgeIds?.length ? <><p>{contextMenu.edgeIds.length > 1 ? 'Связи' : 'Связь'}</p><button className="context-danger" onClick={() => { void onEdgesDelete(edges.filter(edge => contextMenu.edgeIds?.includes(Number(edge.id)))); setContextMenu(null) }}>Удалить {contextMenu.edgeIds.length > 1 ? 'связи' : 'связь'}</button></>
-        : contextMenu.nodeIds && contextMenu.nodeIds.length > 1 ? <><p>Выбрано: {contextMenu.nodeIds.length}</p><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'front'); setContextMenu(null) }}>На передний план</button><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'back'); setContextMenu(null) }}>На задний план</button><button className="context-danger" onClick={() => { setDeleteDialog(true); setContextMenu(null) }}>Удалить выбранные</button></>
-          : contextMenu.nodeId ? <><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) setClipboard(node); setContextMenu(null) }}>Копировать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) { setClipboard(node); setSelectedIds([node.id]); void remove() } setContextMenu(null) }}>Вырезать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) void duplicate(node); setContextMenu(null) }}>Дублировать</button>{board.nodes.find(item => item.id === contextMenu.nodeId)?.type === 'canvas_image' && <><button onClick={() => { toggleImageFlip(contextMenu.nodeId!, 'flip_x'); setContextMenu(null) }}>Отзеркалить по горизонтали</button><button onClick={() => { toggleImageFlip(contextMenu.nodeId!, 'flip_y'); setContextMenu(null) }}>Отзеркалить по вертикали</button></>}<button onClick={() => { void setLayer([contextMenu.nodeId!], 'front'); setContextMenu(null) }}>На передний план</button><button onClick={() => { void setLayer([contextMenu.nodeId!], 'back'); setContextMenu(null) }}>На задний план</button></>
-            : <>{clipboard && <button onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(clipboard.type, point, clipboard); setContextMenu(null) }}>Вставить</button>}<p>Создать</p><button onClick={() => { void create('note', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Заметку</button><button onClick={() => { void create('media', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Медиакарточку</button><button onClick={() => { void create('track', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Музыку</button><button onClick={() => { void create('canvas_text', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Текст</button><button onClick={() => { pendingImagePositionRef.current = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); imageInputRef.current?.click(); setContextMenu(null) }}>Изображение</button></>}
+        : contextMenu.nodeIds && contextMenu.nodeIds.length > 1 ? <><p>Выбрано: {contextMenu.nodeIds.length}</p>{foldersWithContextMembers.length > 0 && <button onClick={() => { void removeContextObjectsFromFolders(); setContextMenu(null) }}>Убрать из папки</button>}{!contextFolder && contextObjects.length > 0 && <button onClick={() => { void createFolderFromSelection(contextMenu.nodeIds || []); setContextMenu(null) }}>Собрать в новую папку</button>}{contextFolder && objectsToAddToFolder.length > 0 && <button onClick={() => { void saveFolderMembers(contextFolder.id, [...folderMemberIds(contextFolder), ...objectsToAddToFolder]); setContextMenu(null) }}>Добавить в папку</button>}<button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'front'); setContextMenu(null) }}>На передний план</button><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'back'); setContextMenu(null) }}>На задний план</button><button className="context-danger" onClick={() => { setDeleteDialog(true); setContextMenu(null) }}>Удалить выбранные</button></>
+          : contextMenu.nodeId ? <>{containingFolderForContextNode && <button onClick={() => { void saveFolderMembers(containingFolderForContextNode.id, folderMemberIds(containingFolderForContextNode).filter(id => id !== contextMenu.nodeId)); setContextMenu(null) }}>Убрать из папки</button>}<button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) setClipboard(node); setContextMenu(null) }}>Копировать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) { setClipboard(node); setSelectedIds([node.id]); void remove() } setContextMenu(null) }}>Вырезать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) void duplicate(node); setContextMenu(null) }}>Дублировать</button>{board.nodes.find(item => item.id === contextMenu.nodeId)?.type === 'folder' && <button onClick={() => { toggleFolder(contextMenu.nodeId!); setContextMenu(null) }}>{folderIsOpen(board.nodes.find(item => item.id === contextMenu.nodeId)!) ? 'Закрыть папку' : 'Открыть папку'}</button>}{board.nodes.find(item => item.id === contextMenu.nodeId)?.type === 'canvas_image' && <><button onClick={() => { toggleImageFlip(contextMenu.nodeId!, 'flip_x'); setContextMenu(null) }}>Отзеркалить по горизонтали</button><button onClick={() => { toggleImageFlip(contextMenu.nodeId!, 'flip_y'); setContextMenu(null) }}>Отзеркалить по вертикали</button></>}<button onClick={() => { void setLayer([contextMenu.nodeId!], 'front'); setContextMenu(null) }}>На передний план</button><button onClick={() => { void setLayer([contextMenu.nodeId!], 'back'); setContextMenu(null) }}>На задний план</button></>
+            : <>{clipboard && <button onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(clipboard.type, point, clipboard); setContextMenu(null) }}>Вставить</button>}<p>Создать</p><button onClick={() => { void create('note', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Заметку</button><button onClick={() => { void create('media', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Медиакарточку</button><button onClick={() => { void create('track', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Музыку</button><button onClick={() => { void create('canvas_text', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Текст</button><button onClick={() => { void create('folder', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }), { title: 'Папка' }); setContextMenu(null) }}>Папку</button><button onClick={() => { pendingImagePositionRef.current = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); imageInputRef.current?.click(); setContextMenu(null) }}>Изображение</button></>}
     </div>}
     {deleteDialog && selectedIds.length > 0 && <div className="confirm-backdrop"><div className="confirm-dialog"><p className="eyebrow">Удаление</p><h2>Удалить {selectedIds.length > 1 ? 'выбранные воспоминания' : 'воспоминание'}?</h2><p>Карточки, их файлы и связи будут удалены.</p><div><button onClick={() => setDeleteDialog(false)}>Отмена</button><button ref={confirmButton} className="confirm-delete" onClick={() => { setDeleteDialog(false); void remove() }}>Подтвердить</button></div></div></div>}
     {activeAsset && <div className="lightbox" onClick={() => setLightbox(null)}><button className="lightbox-close" onClick={() => setLightbox(null)}>×</button>{lightbox.assets.length > 1 && <button className="lightbox-nav prev" onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index: (current.index - 1 + current.assets.length) % current.assets.length } : current) }}>‹</button>}<div className="lightbox-content" onClick={event => event.stopPropagation()} key={activeAsset.id}>{activeAsset.mime_type.startsWith('image/') ? <img src={mediaUrl(activeAsset.storage_path)} alt={activeAsset.original_filename} /> : <video src={mediaUrl(activeAsset.storage_path)} controls autoPlay />}</div>{lightbox.assets.length > 1 && <button className="lightbox-nav next" onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index: (current.index + 1) % current.assets.length } : current) }}>›</button>}<div className="lightbox-footer"><p>{activeAsset.original_filename} {lightbox.assets.length > 1 && `• ${lightbox.index + 1}/${lightbox.assets.length}`}</p>{lightbox.assets.length > 1 && <div className="lightbox-thumbs">{lightbox.assets.map((asset, index) => <button key={asset.id} className={index === lightbox.index ? 'active' : ''} onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index } : current) }}>{asset.mime_type.startsWith('image/') ? <img src={mediaUrl(asset.preview_path || asset.storage_path)} alt={asset.original_filename} /> : <video src={mediaUrl(asset.storage_path)} muted preload="metadata" />}</button>)}</div>}</div></div>}

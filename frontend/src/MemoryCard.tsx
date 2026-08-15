@@ -2,18 +2,21 @@ import { useEffect, useRef } from 'react'
 import { Handle, Node, NodeProps, NodeResizer, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { Asset, CanvasObjectData, MemoryNode, PlaylistItem, mediaUrl } from './api'
 
-const labels = { note: 'Заметка', media: 'Медиакарточка', track: 'Музыка' }
-const icons = { note: '✦', media: '◒', track: '♫' }
+const labels = { note: 'Заметка', media: 'Медиакарточка', track: 'Музыка', folder: 'Папка' }
+const icons = { note: '✦', media: '◒', track: '♫', folder: '▱' }
+const folderIconModules = import.meta.glob('./assets/board-folders/**/*.{webp,png,jpg,jpeg,svg}', { eager: true, query: '?url', import: 'default' }) as Record<string, string>
+const defaultFolderIconUrl = Object.entries(folderIconModules).find(([path]) => path.toLowerCase().includes('macos-blue'))?.[1] || Object.values(folderIconModules)[0]
 const formatNodeDate = (value: string) => new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' }).format(new Date(`${value}T00:00:00`))
 const formatTrackDuration = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 const resizeLimits = (type: MemoryNode['type'], isPlaylist: boolean, largeCover: boolean) => {
   if (type === 'canvas_text') return { minWidth: 80, minHeight: 44 }
   if (type === 'canvas_image') return { minWidth: 80, minHeight: 80 }
+  if (type === 'folder') return { minWidth: 150, minHeight: 110 }
   if (type === 'media') return { minWidth: 120, minHeight: 100 }
   if (type === 'note') return { minWidth: 120, minHeight: 80 }
   return { minWidth: isPlaylist && largeCover ? 180 : 150, minHeight: isPlaylist && largeCover ? 180 : largeCover ? 170 : 110 }
 }
-export type FlowData = MemoryNode & { onOpenMedia?: (assets: Asset[], index: number) => void; onObjectChange?: (patch: Partial<MemoryNode>) => void; onPlaylistToggle?: () => void; playlistOpen?: boolean; isConnecting?: boolean; previewObjectData?: CanvasObjectData; theme?: 'dark' | 'light' } & Record<string, unknown>
+export type FlowData = MemoryNode & { onOpenMedia?: (assets: Asset[], index: number) => void; onObjectChange?: (patch: Partial<MemoryNode>) => void; onPlaylistToggle?: () => void; onFolderToggle?: () => void; playlistOpen?: boolean; isConnecting?: boolean; isFolderDropTarget?: boolean; previewObjectData?: CanvasObjectData; theme?: 'dark' | 'light' } & Record<string, unknown>
 export type FlowMemoryNode = Node<FlowData, 'memory'>
 
 function MediaTile({ asset, index, assets, onOpen }: { asset: Asset; index: number; assets: Asset[]; onOpen?: (assets: Asset[], index: number) => void }) {
@@ -43,7 +46,7 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
   const coverPath = node.track_data?.cover_url || (isPlaylist ? playlistItems[0]?.cover_url : node.track_data?.spotify_cover_url)
   const coverUrl = coverPath?.startsWith('http') ? coverPath : mediaUrl(coverPath)
   const hideTitle = (node.type === 'media' && !node.title) || (isPlaylist && !node.track_data?.title)
-  const showHandles = selected || node.isConnecting
+  const showHandles = Boolean(selected || node.isConnecting)
   const datePosition = node.date_position || 'bottom-center'
   const dateSpaceClass = node.show_date && node.temporal_date ? datePosition.startsWith('top') ? 'has-top-date' : 'has-bottom-date' : ''
   const titlePosition = node.title_position || 'bottom-center'
@@ -51,6 +54,7 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
   const resizeLimit = resizeLimits(node.type, isPlaylist, largeCover)
   useEffect(() => { updateNodeInternals(id) }, [id, playlistOpen, node.isConnecting, selected, updateNodeInternals])
 
+  if (node.type === 'folder') return <FolderNode node={node} selected={Boolean(selected)} />
   if (node.type === 'canvas_text' || node.type === 'canvas_image') return <CanvasObject node={node} selected={selected} resizeLimit={resizeLimit} />
 
   return <div className={`memory-card ${node.type} ${isPlaylist ? 'playlist-card' : ''} ${largeCover ? 'music-large' : ''} ${hideTrackDetails ? 'cover-only' : ''} ${node.height ? 'sized' : ''} ${node.show_type_label ? 'has-type-label' : ''} ${dateSpaceClass} ${mediaTitleClass} ${selected ? 'selected' : ''}`}>
@@ -73,6 +77,20 @@ export default function MemoryCard({ data, selected, id }: NodeProps<FlowMemoryN
     {isPlaylist && <PlaylistRows items={playlistOpen ? playlistItems : playlistPreview} preview={!playlistOpen} />}
     <Handle id="bottom" className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="source" position={Position.Bottom} isConnectableStart isConnectableEnd style={{ left: '50%', transform: 'translateX(-50%)' }} />
     <Handle id="right" className={`memory-handle ${showHandles ? 'is-visible' : ''}`} type="source" position={Position.Right} isConnectableStart isConnectableEnd style={{ top: '50%', transform: 'translateY(-50%)' }} />
+  </div>
+}
+
+function FolderNode({ node, selected }: { node: FlowData; selected: boolean }) {
+  const isOpen = node.object_data?.folder_open === true
+  const members = Array.isArray(node.object_data?.folder_member_ids) ? node.object_data.folder_member_ids : []
+  const folderIconUrl = folderIconModules[node.object_data?.folder_icon_id || ''] || defaultFolderIconUrl
+  return <div className={`folder-node ${selected ? 'selected' : ''} ${isOpen ? 'open' : ''}`}>
+    <div className="folder-image-hitbox" onClick={() => node.onFolderToggle?.()} title={isOpen ? 'Скрыть содержимое папки' : 'Открыть папку'}>
+      {folderIconUrl ? <img src={folderIconUrl} alt="" draggable={false} /> : <span className="folder-node-fallback">▰</span>}
+      {node.isFolderDropTarget && <span className="folder-drop-hint">Перетащите объект</span>}
+      {!isOpen && <span className="folder-node-count">{members.length}</span>}
+    </div>
+    <span className="folder-node-title">{node.title || 'Папка'}</span>
   </div>
 }
 

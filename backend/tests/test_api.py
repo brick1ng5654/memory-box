@@ -76,6 +76,22 @@ def test_edges_and_safe_node_deletion(client):
     assert all(item["id"] != edge.json()["id"] for item in board(client)["edges"])
 
 
+def test_folder_keeps_members_in_existing_json_field(client):
+    current = board(client)
+    member = client.post(f"/api/boards/{current['id']}/nodes", json={"type": "note", "title": "Inside"}).json()
+    folder = client.post(f"/api/boards/{current['id']}/nodes", json={
+        "type": "folder",
+        "title": "Folder",
+        "object_data": {"folder_member_ids": [member["id"]], "folder_open": False},
+    })
+    assert folder.status_code == 201
+    assert folder.json()["type"] == "folder"
+    assert folder.json()["object_data"]["folder_member_ids"] == [member["id"]]
+    assert client.delete(f"/api/nodes/{member['id']}").status_code == 204
+    saved_folder = client.get(f"/api/nodes/{folder.json()['id']}").json()
+    assert saved_folder["object_data"]["folder_member_ids"] == []
+
+
 def test_spotify_search_explains_missing_configuration(client, monkeypatch):
     monkeypatch.delenv("SPOTIFY_CLIENT_ID", raising=False)
     monkeypatch.delenv("SPOTIFY_CLIENT_SECRET", raising=False)
