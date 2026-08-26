@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { addEdge, applyNodeChanges, Background, BackgroundVariant, BaseEdge, Connection, ConnectionMode, Edge, EdgeProps, getBezierPath, NodeChange, OnConnect, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState, useReactFlow, useUpdateNodeInternals } from '@xyflow/react'
+import { addEdge, applyNodeChanges, Background, BackgroundVariant, Connection, ConnectionMode, Edge, EdgeProps, getBezierPath, NodeChange, OnConnect, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState, useReactFlow, useUpdateNodeInternals } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { api, Asset, Board, MemoryEdge, MemoryNode, NodeType, mediaUrl } from './api'
 import MemoryCard, { FlowMemoryNode } from './MemoryCard'
@@ -56,7 +56,7 @@ const toFlowEdge = (edge: MemoryEdge): Edge => ({
 
 function MemoryBezierEdge({ id, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, style }: EdgeProps) {
   const [path] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, curvature: 0.45 })
-  return <BaseEdge id={id} path={path} style={style} />
+  return <path id={id} className="react-flow__edge-path" d={path} pathLength={1} fill="none" style={style} />
 }
 
 const edgeTypes = { memory: MemoryBezierEdge }
@@ -133,9 +133,11 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
           ...edge.style,
           display: hidden ? 'none' : undefined,
           opacity: hidden ? 0 : 1,
-          strokeDasharray: '2000',
-          strokeDashoffset: isOpening || hidden ? '2000' : isClosing ? '-2000' : '0',
-          transition: `stroke-dashoffset ${isClosing ? 260 : 360}ms cubic-bezier(.2,.72,.3,1) ${shouldDraw ? index * 55 : 0}ms`,
+          // pathLength={1} у SVG-пути нормализует значения: 1 — вся длина
+          // конкретной линии, независимо от расстояния между объектами.
+          strokeDasharray: '1',
+          strokeDashoffset: isOpening || hidden ? '1' : isClosing ? '-1' : '0',
+          transition: `stroke-dashoffset ${isClosing ? 220 : 270}ms cubic-bezier(.2,.72,.3,1) ${shouldDraw ? (index % 4) * 36 : 0}ms`,
         },
       }
     }))
