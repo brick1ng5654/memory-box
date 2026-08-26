@@ -13,6 +13,7 @@ class NodeType(str, enum.Enum):
     track = "track"
     canvas_text = "canvas_text"
     canvas_image = "canvas_image"
+    folder = "folder"
 
 
 class MusicKind(str, enum.Enum):

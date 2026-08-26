@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useRef, useState } from 'react'
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { api, Asset, CanvasObjectData, DatePosition, MemoryNode, NodeType, PlaylistItem, SpotifyTrack, Track, mediaUrl } from './api'
 
 type Props = {
@@ -23,6 +23,14 @@ const fontOptions = [
   { value: "'Yeseva One', serif", label: 'Yeseva One' }, { value: "'Comfortaa', sans-serif", label: 'Comfortaa' },
   { value: "'Unbounded', sans-serif", label: 'Unbounded' }, { value: "'Rubik Mono One', monospace", label: 'Rubik Mono One' },
 ]
+const folderIconModules = import.meta.glob('./assets/board-folders/**/*.{webp,png,jpg,jpeg,svg}', { eager: true, query: '?url', import: 'default' }) as Record<string, string>
+const folderIconOptions = Object.entries(folderIconModules).map(([id, url]) => {
+  const relativePath = id.replace('./assets/board-folders/', '')
+  const parts = relativePath.split('/')
+  const filename = parts.pop() || ''
+  return { id, url, directory: parts.join('/'), label: filename.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ') || 'Папка' }
+}).sort((left, right) => left.id.localeCompare(right.id, 'ru'))
+const defaultFolderIconId = folderIconOptions.find(icon => icon.label === 'macos blue')?.id || folderIconOptions[0]?.id || ''
 
 export default function Editor({ node, boardStartDate, boardEndDate, theme, onClose, onSave, onRequestDelete, onDeleteAsset, onUpdateAsset, onReorderAssets, onPreview, onTextChange, onTextPreview }: Props) {
   const [draft, setDraft] = useState<Partial<MemoryNode>>({})
@@ -40,6 +48,8 @@ export default function Editor({ node, boardStartDate, boardEndDate, theme, onCl
   const [durationText, setDurationText] = useState('0:00')
   const [fontSizeInput, setFontSizeInput] = useState('42')
   const [fontMenuOpen, setFontMenuOpen] = useState(false)
+  const [folderIconPickerOpen, setFolderIconPickerOpen] = useState(false)
+  const [folderIconDirectory, setFolderIconDirectory] = useState('')
   const [editorTextValue, setEditorTextValue] = useState('')
   const [rotationInput, setRotationInput] = useState('0')
   const trackSaveQueue = useRef(Promise.resolve())
@@ -53,6 +63,8 @@ export default function Editor({ node, boardStartDate, boardEndDate, theme, onCl
     setEditorTextValue(node?.object_data?.text || '')
     setRotationInput(String(Math.round(node?.object_data?.rotation ?? 0)))
     setFontMenuOpen(false)
+    setFolderIconPickerOpen(false)
+    setFolderIconDirectory('')
     setFiles([]); setError(''); setSpotifyQuery(''); setSpotifyResults([]); setSpotifyError('')
   }, [node?.id])
   useEffect(() => {
@@ -96,7 +108,36 @@ export default function Editor({ node, boardStartDate, boardEndDate, theme, onCl
     setSpotifyQuery(''); setSpotifyResults([]); setSpotifyError('')
   }
   const save = async (closeAfter = false) => { if (busy) return; setBusy(true); setError(''); try { await trackSaveQueue.current; const savedDraft = node?.type === 'canvas_text' ? { ...draft, object_data: { ...(draft.object_data || {}), text: editorTextValue } } : draft; await onSave(savedDraft, files); setFiles([]); if (closeAfter) onClose() } catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'Ошибка сохранения') } finally { setBusy(false) } }
+  const saveFolder = async (closeAfter = false) => {
+    if (busy) return
+    setBusy(true); setError('')
+    try {
+      const folderDraft: Partial<MemoryNode> = { title: draft.title }
+      if (draft.object_data?.folder_icon_id) folderDraft.object_data = { folder_icon_id: draft.object_data.folder_icon_id }
+      await onSave(folderDraft)
+      if (closeAfter) onClose()
+    }
+    catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'Ошибка сохранения') }
+    finally { setBusy(false) }
+  }
+  const selectFolderIcon = (folderIconId: string) => {
+    setDraft(current => ({ ...current, object_data: { ...(current.object_data || {}), folder_icon_id: folderIconId } }))
+    setFolderIconPickerOpen(false)
+    setFolderIconDirectory('')
+    void onSave({ object_data: { folder_icon_id: folderIconId } }).catch(saveError => setError(saveError instanceof Error ? saveError.message : 'Ошибка сохранения'))
+  }
   const reorderFromDrag = async (targetId: number) => { if (!node || draggedAssetId === null || draggedAssetId === targetId) return; const items = [...node.media_assets]; const from = items.findIndex(asset => asset.id === draggedAssetId); const to = items.findIndex(asset => asset.id === targetId); if (from < 0 || to < 0) return; const [item] = items.splice(from, 1); items.splice(to, 0, item); setDraggedAssetId(null); setDropTargetId(null); await onReorderAssets(items) }
+  const folderIconEntries = useMemo(() => {
+    const prefix = folderIconDirectory ? `${folderIconDirectory}/` : ''
+    const directories = [...new Set(folderIconOptions
+      .filter(icon => icon.directory.startsWith(prefix) && icon.directory !== folderIconDirectory)
+      .map(icon => icon.directory.slice(prefix.length).split('/')[0])
+      .filter(Boolean))].sort((left, right) => left.localeCompare(right, 'ru')).map(name => {
+      const fullPath = `${prefix}${name}`
+      return { name, cover: folderIconOptions.find(icon => icon.directory === fullPath || icon.directory.startsWith(`${fullPath}/`)) }
+    })
+    return { directories, icons: folderIconOptions.filter(icon => icon.directory === folderIconDirectory) }
+  }, [folderIconDirectory])
   if (!node) return null
   if (node.type === 'canvas_text') {
     const text = draft.object_data || {}
@@ -122,8 +163,8 @@ export default function Editor({ node, boardStartDate, boardEndDate, theme, onCl
       onPreview({ object_data: next })
       onTextChange(next)
     }
-    return <aside className="editor" onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
-      <button className="close" onClick={() => void save(true)}>×</button><p className="eyebrow">Текст на холсте</p><h2>Оформление текста</h2>
+    return <aside className="editor" data-editor-title="Текст" onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
+      <button className="close" onClick={() => void save(true)} aria-label="Закрыть">×</button>
       <label>Текст<textarea value={editorTextValue} spellCheck={false} onChange={event => updateText({ text: event.target.value })} onBlur={flushText} rows={5} /></label>
       <label>Размер<input type="number" min="12" max="240" value={fontSizeInput} onChange={event => setFontSizeInput(event.target.value)} onBlur={() => { const size = Number(fontSizeInput); if (Number.isFinite(size) && size >= 12 && size <= 240) updateText({ font_size: size }); else setFontSizeInput(String(text.font_size || 42)) }} /></label>
       <label>Шрифт<div className="font-picker" onMouseLeave={() => onTextPreview(null)}><button type="button" className="font-picker-trigger" onClick={() => { onTextPreview(null); setFontMenuOpen(open => !open) }}>{fontOptions.find(option => option.value === (text.font_family || "Inter, 'Segoe UI', Arial, sans-serif"))?.label || 'Выбрать шрифт'}</button>{fontMenuOpen && <div className="font-picker-menu" role="listbox">{fontOptions.map(option => <button key={option.value} type="button" className={option.value === (text.font_family || "Inter, 'Segoe UI', Arial, sans-serif") ? 'active' : ''} style={{ fontFamily: option.value }} onMouseEnter={() => onTextPreview(option.value)} onFocus={() => onTextPreview(option.value)} onClick={() => { updateText({ font_family: option.value }); onTextPreview(null); setFontMenuOpen(false) }}>{option.label}</button>)}</div>}</div></label>
@@ -153,19 +194,28 @@ export default function Editor({ node, boardStartDate, boardEndDate, theme, onCl
       if (Number.isInteger(value)) setRotation(value)
       else setRotationInput(String(rotation))
     }
-    return <aside className="editor" onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
-      <button className="close" onClick={() => void save(true)}>×</button><p className="eyebrow">Изображение на холсте</p><h2>Оформление изображения</h2>
+    return <aside className="editor" data-editor-title="Изображение" onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
+      <button className="close" onClick={() => void save(true)} aria-label="Закрыть">×</button>
       <label>Поворот<input type="range" min="-180" max="180" step="1" value={rotation} onChange={event => setRotation(Number(event.target.value))} /></label>
       <label>Угол<input type="text" inputMode="numeric" value={rotationInput} onChange={event => { const value = event.target.value; if (/^-?\d*$/.test(value)) setRotationInput(value) }} onBlur={commitRotation} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commitRotation(); event.currentTarget.blur() } }} /></label>
       <div className="image-transform-actions"><button type="button" onClick={() => updateImage({ flip_x: !image.flip_x })}>Отразить по горизонтали</button><button type="button" onClick={() => updateImage({ flip_y: !image.flip_y })}>Отразить по вертикали</button></div>
       {error && <p className="error">{error}</p>}<div className="editor-actions"><button className="danger" onClick={onRequestDelete}>Удалить</button>{busy && <span className="saving">Сохраняю…</span>}</div>
     </aside>
   }
+  if (node.type === 'folder') {
+    const selectedFolderIcon = folderIconOptions.find(icon => icon.id === (draft.object_data?.folder_icon_id || defaultFolderIconId))
+    return <aside className="editor" data-editor-title="Папка" onBlur={() => void saveFolder()} onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
+    <button className="close" onMouseDown={event => event.preventDefault()} onClick={() => void saveFolder(true)} aria-label="Закрыть">×</button>
+    <label>Название<input value={draft.title || ''} onChange={event => updateDraft({ title: event.target.value })} placeholder="Папка" autoFocus /></label>
+    <label>Иконка папки</label><button type="button" className="folder-icon-picker-button" onMouseDown={event => event.preventDefault()} onClick={() => setFolderIconPickerOpen(open => { if (!open) setFolderIconDirectory(''); return !open })}>{selectedFolderIcon && <img src={selectedFolderIcon.url} alt="" />}<span>{selectedFolderIcon?.label || 'Выбрать иконку'}</span></button>{folderIconPickerOpen && <div className="folder-icon-browser editor-folder-icon-browser">{folderIconDirectory && <button type="button" className="folder-icon-back" onMouseDown={event => event.preventDefault()} onClick={() => setFolderIconDirectory(current => current.split('/').slice(0, -1).join('/'))}>← Назад</button>}<div className="folder-icon-options editor-folder-icon-options">{folderIconEntries.directories.map(directory => <button type="button" key={directory.name} className="folder-icon-directory" onMouseDown={event => event.preventDefault()} onClick={() => setFolderIconDirectory(current => current ? `${current}/${directory.name}` : directory.name)} title={`Открыть папку «${directory.name}»`}>{directory.cover && <img src={directory.cover.url} alt="" />}<span>{directory.name}</span></button>)}{folderIconEntries.icons.map(icon => <button type="button" key={icon.id} className={(draft.object_data?.folder_icon_id || defaultFolderIconId) === icon.id ? 'selected' : ''} onMouseDown={event => event.preventDefault()} onClick={() => selectFolderIcon(icon.id)} title={icon.label}><img src={icon.url} alt="" /><span>{icon.label}</span></button>)}</div></div>}
+    {error && <p className="error">{error}</p>}<div className="editor-actions"><button className="danger" onClick={onRequestDelete}>Удалить</button>{busy && <span className="saving">Сохраняю…</span>}</div>
+  </aside>
+  }
   const track = { ...emptyTrack, ...(draft.track_data || {}) }
   const spotifySearch = <div className="spotify-search"><label>Найти в Spotify<input value={spotifyQuery} onChange={event => setSpotifyQuery(event.target.value)} placeholder="Название трека или исполнитель" autoComplete="off" /></label>{spotifySearching && <p className="spotify-search-state">Ищу в Spotify…</p>}{spotifyError && <p className="error">{spotifyError}</p>}{spotifyResults.length > 0 && <div className="spotify-results">{spotifyResults.map(result => <button type="button" key={result.id} onClick={() => selectSpotifyTrack(result)}>{result.cover_url ? <img src={result.cover_url} alt="" /> : <span className="spotify-result-cover" />}<span><strong>{result.title}</strong><small>{result.artist}</small></span></button>)}</div>}</div>
 
-  return <aside className="editor" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) void save() }} onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
-    <button className="close" onClick={() => void save(true)}>×</button><p className="eyebrow">{node.type === 'track' ? 'Музыка' : node.type === 'media' ? 'Медиакарточка' : 'Заметка'}</p><h2>Воспоминание</h2>
+  return <aside className="editor" data-editor-title={node.type === 'track' ? 'Музыка' : node.type === 'media' ? 'Медиакарточка' : 'Заметка'} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) void save() }} onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
+    <button className="close" onClick={() => void save(true)} aria-label="Закрыть">×</button>
     {node.type !== 'track' && <label>Название<input value={draft.title || ''} onChange={event => updateDraft({ title: event.target.value })} placeholder={node.type === 'note' ? 'Можно оставить пустым' : 'Короткое название'} /></label>}
     {node.type === 'note' && <label>Текст<textarea value={draft.text_content || ''} spellCheck={false} onChange={event => updateDraft({ text_content: event.target.value })} placeholder="Что хочется сохранить?" rows={7} /></label>}
     {node.type === 'media' && <><label>Добавить файлы<input type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,video/x-m4v,.m4v" onChange={(event: ChangeEvent<HTMLInputElement>) => setFiles(Array.from(event.target.files || []))} /></label>{files.length > 0 && <p className="queued-files">Будет загружено: {files.map(file => file.name).join(', ')}</p>}<div className="asset-list">{node.media_assets.map(asset => <div className={`asset-row ${draggedAssetId === asset.id ? 'dragging' : ''} ${dropTargetId === asset.id && draggedAssetId !== asset.id ? 'drop-target' : ''}`} key={asset.id} draggable onDragStart={() => setDraggedAssetId(asset.id)} onDragEnd={() => { setDraggedAssetId(null); setDropTargetId(null) }} onDragOver={event => { event.preventDefault(); setDropTargetId(asset.id) }} onDragLeave={() => setDropTargetId(current => current === asset.id ? null : current)} onDrop={() => void reorderFromDrag(asset.id)}><span className="drag-handle" title="Перетащите для изменения порядка">⠿</span><button className={`favorite-asset ${asset.is_favorite ? 'active' : ''}`} title="Показывать в превью" onClick={() => onUpdateAsset(asset, { is_favorite: !asset.is_favorite })}>★</button><a href={mediaUrl(asset.storage_path)} target="_blank">{asset.original_filename}</a><button className="remove-asset" title="Удалить файл" onClick={() => onDeleteAsset(asset)}>×</button></div>)}</div></>}
