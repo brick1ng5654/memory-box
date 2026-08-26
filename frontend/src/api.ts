@@ -23,9 +23,23 @@ export type MemoryNode = { id: number; board_id: number; type: NodeType; title: 
 export type MemoryEdge = { id: number; board_id: number; source_node_id: number; target_node_id: number; source_handle?: 'left' | 'right' | 'top' | 'bottom' | null; target_handle?: 'left' | 'right' | 'top' | 'bottom' | null; label?: string | null }
 export type Board = { id: number; title: string; year: number; month: number; start_date: string; end_date: string; nodes: MemoryNode[]; edges: MemoryEdge[] }
 
+const englishApiErrors: Record<string, string> = {
+  'Доска не найдена': 'Board not found', 'Узел не найден': 'Node not found', 'Связь не найдена': 'Connection not found', 'Файл не найден': 'File not found',
+  'Конечная дата не может быть раньше начальной': 'End date cannot be earlier than start date', 'Не удалось найти исходный медиафайл для дублирования': 'Could not find source media file for duplication',
+  'Дублировать с файлами можно только медиакарточку или изображение': 'Only a media card or image can be duplicated with files', 'Данные трека допустимы только для узла типа track': 'Track data is only valid for a track node',
+  'Медиа можно прикреплять только к медиа-узлу': 'Media can only be attached to a media node', 'Поддерживаются JPEG, PNG, WebP, GIF, MP4, WebM и MOV': 'JPEG, PNG, WebP, GIF, MP4, WebM, and MOV are supported',
+  'Файл не является корректным изображением': 'File is not a valid image', 'Нельзя связать узел с самим собой': 'A node cannot be connected to itself', 'Оба узла должны принадлежать этой доске': 'Both nodes must belong to this board',
+  'Не удалось выполнить поиск в Spotify': 'Could not search Spotify', 'Spotify временно недоступен. Попробуйте ещё раз': 'Spotify is temporarily unavailable. Please try again.',
+  'Добавьте SPOTIFY_CLIENT_ID и SPOTIFY_CLIENT_SECRET в .env и перезапустите Docker Compose': 'Add SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET to .env, then restart Docker Compose',
+}
+const apiError = (detail: unknown, russianFallback: string, englishFallback: string) => {
+  const message = typeof detail === 'string' ? detail : russianFallback
+  return window.localStorage.getItem('memorybox-language') === 'en' ? englishApiErrors[message] || englishFallback : message
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, { headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) }, ...init })
-  if (!res.ok) { const data = await res.json().catch(() => null); throw new Error(data?.detail || 'Не удалось выполнить запрос') }
+  if (!res.ok) { const data = await res.json().catch(() => null); throw new Error(apiError(data?.detail, 'Не удалось выполнить запрос', 'Request failed')) }
   return res.status === 204 ? undefined as T : res.json()
 }
 
@@ -46,6 +60,6 @@ export const api = {
   deleteEdge: (id: number) => request<void>(`/edges/${id}`, { method: 'DELETE' }),
   deleteMedia: (id: number) => request<void>(`/media/${id}`, { method: 'DELETE' }),
   updateMedia: (id: number, data: Partial<Pick<Asset, 'sort_order' | 'is_favorite'>>) => request<Asset>(`/media/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-  upload: async (nodeId: number, file: File) => { const fd = new FormData(); fd.append('file', file); const res = await fetch(`/api/nodes/${nodeId}/media`, { method: 'POST', body: fd }); if (!res.ok) { const d = await res.json().catch(() => null); throw new Error(d?.detail || 'Не удалось загрузить файл') }; return res.json() as Promise<Asset> }
+  upload: async (nodeId: number, file: File) => { const fd = new FormData(); fd.append('file', file); const res = await fetch(`/api/nodes/${nodeId}/media`, { method: 'POST', body: fd }); if (!res.ok) { const data = await res.json().catch(() => null); throw new Error(apiError(data?.detail, 'Не удалось загрузить файл', 'Could not upload file')) }; return res.json() as Promise<Asset> }
 }
 export const mediaUrl = (path?: string | null) => path ? `/media/${path}` : undefined
