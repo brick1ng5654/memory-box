@@ -4,11 +4,11 @@ import '@xyflow/react/dist/style.css'
 import { api, Asset, Board, MemoryEdge, MemoryNode, NodeType, mediaUrl } from './api'
 import MemoryCard, { FlowMemoryNode } from './MemoryCard'
 import Editor from './Editor'
+import { LanguageSwitcher, LocalizationProvider, useLocalization } from './i18n'
 
 const nodeTypes = { memory: MemoryCard }
-const monthNames = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
-const formatDate = (value: string) => new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${value}T00:00:00`))
-const formatPeriod = (board: Pick<Board, 'start_date' | 'end_date'>) => board.start_date === board.end_date ? formatDate(board.start_date) : `${formatDate(board.start_date)} — ${formatDate(board.end_date)}`
+const formatDate = (value: string, language: 'ru' | 'en') => new Intl.DateTimeFormat(language === 'en' ? 'en-US' : 'ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${value}T00:00:00`))
+const formatPeriod = (board: Pick<Board, 'start_date' | 'end_date'>, language: 'ru' | 'en') => board.start_date === board.end_date ? formatDate(board.start_date, language) : `${formatDate(board.start_date, language)} — ${formatDate(board.end_date, language)}`
 const toDateKey = (value: Date) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
 const todayKey = () => toDateKey(new Date())
 const defaultNodeWidth = (node: MemoryNode) => node.type === 'folder' ? 220 : node.type === 'media' ? 300 : node.type === 'track' ? node.track_data?.cover_size === 'large' ? 320 : 340 : 230
@@ -62,6 +62,7 @@ function MemoryBezierEdge({ id, sourceX, sourceY, sourcePosition, targetX, targe
 const edgeTypes = { memory: MemoryBezierEdge }
 
 function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: number; onHome: () => void; theme: Theme; onToggleTheme: () => void }) {
+  const { language, t } = useLocalization()
   const { screenToFlowPosition, setCenter } = useReactFlow()
   const updateNodeInternals = useUpdateNodeInternals()
   const [board, setBoard] = useState<Board | null>(null)
@@ -100,7 +101,9 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
   const folderDropTargetRef = useRef<number | null>(null)
   const draggedGroupRef = useRef<DragGroup | null>(null)
   const themeRef = useRef(theme)
+  const tRef = useRef(t)
   themeRef.current = theme
+  tRef.current = t
   const objectChange = useCallback((id: number, patch: Partial<MemoryNode>) => objectChangeRef.current(String(id), patch), [])
   const toggleFolder = useCallback((id: number) => folderToggleRef.current(id), [])
   const applyFolderPresentation = useCallback((allNodes: MemoryNode[], transitions = folderTransitionsRef.current) => {
@@ -165,7 +168,7 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
       const focusNode = datedNodes[0] || next.nodes[0]
       if (focusNode) setInitialFocus({ x: focusNode.position_x + (focusNode.width ?? defaultNodeWidth(focusNode)) / 2, y: focusNode.position_y + (focusNode.height ?? defaultNodeHeight(focusNode) ?? 180) / 2 })
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Не удалось загрузить холст')
+      setNotice(error instanceof Error ? error.message : tRef.current('Не удалось загрузить холст', 'Could not load canvas'))
     } finally { setLoading(false) }
   }, [applyFolderPresentation, boardId, openMedia, setEdges, setNodes, toggleFolder, togglePlaylistOpen])
 
@@ -204,14 +207,14 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
           setEdges(current => current.filter(edge => !ids.has(Number(edge.id))))
           setBoard(current => current ? { ...current, edges: current.edges.filter(edge => !ids.has(edge.id)) } : current)
           setSelectedEdgeIds([])
-        }).catch(error => setNotice(error instanceof Error ? error.message : 'Не удалось удалить связь'))
+        }).catch(error => setNotice(error instanceof Error ? error.message : t('Не удалось удалить связь', 'Could not delete connection')))
         return
       }
       if (event.key === 'Delete' && selectedIds.length) { event.preventDefault(); setDeleteDialog(true) }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [lightbox, selected, selectedIds, selectedEdgeIds, clipboard, setEdges])
+  }, [lightbox, selected, selectedIds, selectedEdgeIds, clipboard, setEdges, t])
 
   const replaceNode = useCallback((updated: MemoryNode, preserveExistingMedia = false) => {
     setNodes(list => list.map(node => node.id === String(updated.id) ? {
@@ -271,17 +274,17 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
       const nextNodes = allNodes.map(node => savedById.get(node.id) || node)
       applyFolderPresentation(nextNodes)
       return true
-    } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось изменить содержимое папки'); return false }
+    } catch (error) { setNotice(error instanceof Error ? error.message : t('Не удалось изменить содержимое папки', 'Could not update folder contents')); return false }
   }
   const createFolderFromSelection = async (ids: number[]) => {
     const currentNodes = currentCanvasNodes()
     const members = currentNodes.filter(node => ids.includes(node.id) && node.type !== 'folder')
-    if (!members.length) { setNotice('Выберите хотя бы один объект, который нужно поместить в папку'); return }
+    if (!members.length) { setNotice(t('Выберите хотя бы один объект, который нужно поместить в папку', 'Select at least one object to place in the folder')); return }
     const position = {
       x: Math.min(...members.map(node => node.position_x)) - 18,
       y: Math.min(...members.map(node => node.position_y)) - 24,
     }
-    const folder = await create('folder', position, { title: 'Папка' })
+    const folder = await create('folder', position, { title: t('Папка', 'Folder') })
     if (folder) await saveFolderMembers(folder.id, members.map(node => node.id), folder)
   }
   const folderForDroppedNode = (flowNode: FlowMemoryNode) => {
@@ -345,7 +348,7 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
     applyFolderPresentation(optimisticNodes)
     void Promise.all(movedNodes.map(node => syncNode(String(node.id), { position_x: node.position_x, position_y: node.position_y })))
     const saved = await saveFolderMembers(targetFolder.id, nextMemberIds, undefined, optimisticNodes)
-    if (saved) setNotice(`${nodesToAdd.length > 1 ? 'Объекты добавлены' : 'Объект добавлен'} в папку «${targetFolder.title || 'Папка'}»`)
+    if (saved) setNotice(`${nodesToAdd.length > 1 ? t('Объекты добавлены', 'Objects added') : t('Объект добавлен', 'Object added')} ${t('в папку', 'to folder')} «${targetFolder.title || t('Папка', 'Folder')}»`)
   }
   folderToggleRef.current = (folderId: number) => {
     if (folderTransitionTimersRef.current[folderId]) return
@@ -363,7 +366,7 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
       } catch (error) {
         replaceNode(folder)
         applyFolderPresentation(currentNodes)
-        setNotice(error instanceof Error ? error.message : 'Не удалось изменить состояние папки')
+        setNotice(error instanceof Error ? error.message : t('Не удалось изменить состояние папки', 'Could not update folder state'))
       }
     }
     if (nextOpen) {
@@ -392,7 +395,7 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
     try {
       const saved = await Promise.all(targets.map((node, index) => api.updateNode(node.id, { z_index: start + index })))
       saved.forEach(node => replaceNode(node))
-    } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось изменить порядок слоёв') }
+    } catch (error) { setNotice(error instanceof Error ? error.message : t('Не удалось изменить порядок слоёв', 'Could not update layer order')) }
   }
   const syncNode = useCallback(async (id: string, data: Partial<MemoryNode>) => {
     try {
@@ -410,7 +413,7 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
       } : node))
       setBoard(current => current ? { ...current, nodes: current.nodes.map(node => node.id === saved.id ? { ...saved, ...node, ...data } : node) } : current)
       setSelected(current => current?.id === saved.id ? { ...saved, ...current, ...data } : current)
-    } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось сохранить изменения') }
+    } catch (error) { setNotice(error instanceof Error ? error.message : t('Не удалось сохранить изменения', 'Could not save changes')) }
   }, [objectChange, openMedia, setNodes])
   useEffect(() => () => {
     Object.values(objectSyncTimersRef.current).forEach(timer => clearTimeout(timer))
@@ -455,7 +458,7 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
       const saved = await api.createEdge(board.id, Number(connection.source), Number(connection.target), connection.sourceHandle, connection.targetHandle)
       setEdges(old => addEdge(toFlowEdge(saved), old))
       setBoard(current => current ? { ...current, edges: [...current.edges, saved] } : current)
-    } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось создать связь') }
+    } catch (error) { setNotice(error instanceof Error ? error.message : t('Не удалось создать связь', 'Could not create connection')) }
   }, [board, setEdges])
   const setConnectionCandidate = useCallback((candidateId: string | null) => {
     if (connectionCandidateRef.current === candidateId) return
@@ -508,7 +511,7 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
         temporal_date: source?.temporal_date,
         show_date: source?.show_date ?? true, show_type_label: source?.show_type_label ?? false, date_position: source?.date_position ?? 'bottom-center', title_position: source?.title_position ?? 'bottom-center',
         track_data: type === 'track' ? source?.track_data || { title: '', artist: '', kind: 'track', cover_size: 'small', playlist_items: [], collapsed_item_limit: 3, show_timeline: false, duration_seconds: 0, hide_details: false } : undefined,
-        object_data: folder ? { folder_member_ids: [], folder_open: false } : source?.object_data ?? (type === 'canvas_text' ? { text: 'Текст', font_size: 42, font_family: "Inter, 'Segoe UI', Arial, sans-serif" } : undefined),
+        object_data: folder ? { folder_member_ids: [], folder_open: false } : source?.object_data ?? (type === 'canvas_text' ? { text: t('Текст', 'Text'), font_size: 42, font_family: "Inter, 'Segoe UI', Arial, sans-serif" } : undefined),
       })
       setNodes(current => [...current.map(item => ({ ...item, selected: false })), { ...toFlowNode(node, openMedia, patch => objectChange(node.id, patch), togglePlaylistOpen, toggleFolder, theme), selected: true }])
       applyFolderPresentation([...nodesRef.current.map(item => item.data), node])
@@ -516,14 +519,14 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
       selectionRef.current = [node.id]
       setSelected(node); setSelectedIds([node.id])
       return node
-    } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось создать узел') }
+    } catch (error) { setNotice(error instanceof Error ? error.message : t('Не удалось создать узел', 'Could not create node')) }
     return null
   }
   const createPng = async (file: File, position: { x: number; y: number }) => {
     try {
       const node = await create('canvas_image', position)
       if (node) { await api.upload(node.id, file); replaceNode(await api.node(node.id)) }
-    } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось добавить PNG') }
+    } catch (error) { setNotice(error instanceof Error ? error.message : t('Не удалось добавить PNG', 'Could not add PNG')) }
   }
   const clipboardPosition = () => {
     const pointer = canvasPointerRef.current
@@ -536,10 +539,10 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
       const extension = clipboardMediaExtensions[file.type]
       const uploadFile = file.name ? file : new File([file], `clipboard-${index + 1}.${extension}`, { type: file.type })
       try { await api.upload(node.id, uploadFile) }
-      catch (error) { errors.push(error instanceof Error ? error.message : 'Не удалось загрузить файл') }
+      catch (error) { errors.push(error instanceof Error ? error.message : t('Не удалось загрузить файл', 'Could not upload file')) }
     }
     try { replaceNode(await api.node(node.id)) }
-    catch (error) { errors.push(error instanceof Error ? error.message : 'Не удалось обновить медиа') }
+    catch (error) { errors.push(error instanceof Error ? error.message : t('Не удалось обновить медиа', 'Could not update media')) }
     if (errors.length) setNotice(errors.join('\n'))
   }
   const pasteMedia = async (files: File[]) => {
@@ -566,7 +569,7 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
       const hasUnsupportedMedia = Array.from(clipboardData.items).some(item => item.kind === 'file' && (item.type.startsWith('image/') || item.type.startsWith('video/')))
       if (hasUnsupportedMedia) {
         event.preventDefault()
-        setNotice('Поддерживаются JPEG, PNG, WebP, GIF, MP4, WebM и MOV')
+        setNotice(t('Поддерживаются JPEG, PNG, WebP, GIF, MP4, WebM и MOV', 'JPEG, PNG, WebP, GIF, MP4, WebM, and MOV are supported'))
         return
       }
       const text = clipboardData.getData('text/plain')
@@ -591,8 +594,8 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
     const errors: string[] = []
     for (const file of files) {
       try { await api.upload(updated.id, file) }
-      catch (error) { errors.push(`${file.name}: ${error instanceof Error ? error.message : 'не удалось загрузить файл'}`) }
-      finally { try { replaceNode(await api.node(updated.id)) } catch (refreshError) { errors.push(`Не удалось обновить список файлов: ${refreshError instanceof Error ? refreshError.message : 'повторите попытку'}`) } }
+      catch (error) { errors.push(`${file.name}: ${error instanceof Error ? error.message : t('не удалось загрузить файл', 'could not upload file')}`) }
+      finally { try { replaceNode(await api.node(updated.id)) } catch (refreshError) { errors.push(`${t('Не удалось обновить список файлов:', 'Could not refresh file list:')} ${refreshError instanceof Error ? refreshError.message : t('повторите попытку', 'try again')}`) } }
     }
     if (errors.length) throw new Error(errors.join('\n'))
   }
@@ -629,7 +632,7 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
       selectionRef.current = [node.id]
       setSelected(node); setSelectedIds([node.id])
       return node
-    } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось дублировать медиа') }
+    } catch (error) { setNotice(error instanceof Error ? error.message : t('Не удалось дублировать медиа', 'Could not duplicate media')) }
     return null
   }
   const toggleImageFlip = (nodeId: number, axis: 'flip_x' | 'flip_y') => {
@@ -650,21 +653,21 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
   const removeAsset = async (asset: Asset) => {
     if (!selected) return
     try { await api.deleteMedia(asset.id); replaceNode({ ...selected, media_assets: selected.media_assets.filter(item => item.id !== asset.id) }) }
-    catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось удалить файл') }
+    catch (error) { setNotice(error instanceof Error ? error.message : t('Не удалось удалить файл', 'Could not delete file')) }
   }
   const updateAsset = async (asset: Asset, patch: Partial<Pick<Asset, 'is_favorite' | 'sort_order'>>) => {
     if (!selected) return
     try {
       const updated = await api.updateMedia(asset.id, patch)
       replaceNode({ ...selected, media_assets: selected.media_assets.map(item => item.id === updated.id ? updated : item).sort((a, b) => a.sort_order - b.sort_order) })
-    } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось обновить файл') }
+    } catch (error) { setNotice(error instanceof Error ? error.message : t('Не удалось обновить файл', 'Could not update file')) }
   }
   const reorderAssets = async (assets: Asset[]) => {
     if (!selected) return
     try {
       const saved = await Promise.all(assets.map((asset, index) => api.updateMedia(asset.id, { sort_order: index })))
       replaceNode({ ...selected, media_assets: saved.sort((a, b) => a.sort_order - b.sort_order) })
-    } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось изменить порядок') }
+    } catch (error) { setNotice(error instanceof Error ? error.message : t('Не удалось изменить порядок', 'Could not change order')) }
   }
   const closeEditor = () => {
     if (selected && board) {
@@ -679,8 +682,8 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
     while (current <= end) { dates.push(toDateKey(current)); current.setDate(current.getDate() + 1) }
     return dates
   }, [board])
-  if (loading) return <main className="loading">Открываем MemoryBox…</main>
-  if (!board) return <main className="loading error">{notice || 'Доска недоступна'}</main>
+  if (loading) return <main className="loading">{t('Открываем MemoryBox…', 'Opening MemoryBox…')}</main>
+  if (!board) return <main className="loading error">{notice || t('Доска недоступна', 'Board unavailable')}</main>
   const activeAsset = lightbox?.assets[lightbox.index]
   const dotSize = Math.min(9, Math.max(1.35, 1.7 / zoom))
   const contextMenuNodes = contextMenu?.nodeIds?.map(id => board.nodes.find(node => node.id === id)).filter((node): node is MemoryNode => Boolean(node)) || []
@@ -698,23 +701,23 @@ function BoardCanvas({ boardId, onHome, theme, onToggleTheme }: { boardId: numbe
   const containingFolderForContextNode = contextMenu?.nodeId ? board.nodes.find(node => node.type === 'folder' && folderMemberIds(node).includes(contextMenu.nodeId!)) : undefined
 
   return <main className={`app theme-${theme}`} onClick={() => setContextMenu(null)}>
-    <header><div><input aria-label="Название доски" value={board.title} onChange={event => setBoard({ ...board, title: event.target.value })} onBlur={async () => { try { await api.renameBoard(board.id, board.title) } catch { setNotice('Не удалось сохранить название') } }} /></div><div className="header-actions"><button className="theme-toggle" onClick={onToggleTheme} aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}>{theme === 'dark' ? '☀' : '☾'}</button><button className="boards-link" onClick={onHome}>Все доски</button></div></header>
+    <header><div><input aria-label={t('Название доски', 'Board title')} value={board.title} onChange={event => setBoard({ ...board, title: event.target.value })} onBlur={async () => { try { await api.renameBoard(board.id, board.title) } catch { setNotice(t('Не удалось сохранить название', 'Could not save title')) } }} /></div><div className="header-actions"><LanguageSwitcher /><button className="theme-toggle" onClick={onToggleTheme} aria-label={theme === 'dark' ? t('Включить светлую тему', 'Enable light theme') : t('Включить тёмную тему', 'Enable dark theme')} title={theme === 'dark' ? t('Светлая тема', 'Light theme') : t('Тёмная тема', 'Dark theme')}>{theme === 'dark' ? '☀' : '☾'}</button><button className="boards-link" onClick={onHome}>{t('Все доски', 'All boards')}</button></div></header>
     {notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
     <input ref={imageInputRef} className="visually-hidden" type="file" accept="image/png,.png" onChange={event => { const file = event.target.files?.[0]; const position = pendingImagePositionRef.current; event.currentTarget.value = ''; if (file && position) void createPng(file, position) }} />
     <section ref={canvasRef} className="canvas-wrap" onPointerMoveCapture={event => { canvasPointerRef.current = { x: event.clientX, y: event.clientY } }} onMouseDownCapture={event => { if (event.button === 2) contextSelectionRef.current = { nodeIds: nodes.filter(node => node.selected).map(node => Number(node.id)), edgeIds: edges.filter(edge => edge.selected).map(edge => Number(edge.id)) } }} onContextMenuCapture={event => { const target = event.target as HTMLElement; const nodeElement = target.closest<HTMLElement>('.react-flow__node'); const edgeElement = target.closest<HTMLElement>('.react-flow__edge'); const nodeId = Number(nodeElement?.dataset.id); const edgeId = Number(edgeElement?.dataset.id); openContextMenu(event, Number.isFinite(nodeId) ? nodeId : undefined, Number.isFinite(edgeId) ? [edgeId] : undefined) }}>
       <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onSelectionChange={onSelectionChange} onNodeClick={(_, node) => { const latest = nodesRef.current.find(item => item.id === node.id)?.data || node.data; setSelected(latest); setSelectedIds([Number(node.id)]); setSelectedEdgeIds([]) }} onEdgeClick={(_, edge) => { setSelectedEdgeIds([Number(edge.id)]); setSelected(null); setSelectedIds([]) }} onNodeContextMenu={(event, node) => openContextMenu(event, Number(node.id))} onEdgeContextMenu={(event, edge) => { const id = Number(edge.id); openContextMenu(event, undefined, selectedEdgeIds.length > 1 && selectedEdgeIds.includes(id) ? selectedEdgeIds : [id]) }} onPaneContextMenu={event => openContextMenu(event)} onPaneClick={() => { setSelected(null); setSelectedIds([]); setSelectedEdgeIds([]) }} onNodeDragStart={(_, node) => { const selectedNodes = nodesRef.current.filter(item => item.selected); const group = selectedNodes.some(item => item.id === node.id) ? selectedNodes : [node]; draggedGroupRef.current = { origin: { ...node.position }, positions: Object.fromEntries(group.map(item => [Number(item.id), { ...item.position }])) }; updateFolderDropTarget(node) }} onNodeDrag={(_, node) => updateFolderDropTarget(node)} onNodeDragStop={(_, node) => { const dragGroup = draggedGroupRef.current; draggedGroupRef.current = null; setFolderDropTarget(null); void addDroppedNodesToFolder(node, dragGroup) }} onConnectStart={(_, params) => { connectionSourceRef.current = params.nodeId; setConnectionCandidate(null) }} onConnectEnd={() => { connectionSourceRef.current = null; setConnectionCandidate(null) }} onMouseMove={onConnectionPointerMove} onConnect={onConnect} onMove={(_, viewport) => { if (Math.abs(viewport.zoom - zoomRef.current) >= 0.02) { zoomRef.current = viewport.zoom; setZoom(viewport.zoom) } }} nodeTypes={nodeTypes} edgeTypes={edgeTypes} deleteKeyCode={null} connectionMode={ConnectionMode.Loose} connectionRadius={32} proOptions={{ hideAttribution: true }} onlyRenderVisibleElements minZoom={0.2} maxZoom={2} defaultEdgeOptions={{ type: 'memory' }}>
         <Background variant={BackgroundVariant.Dots} color={theme === 'light' ? '#d2cadb' : '#484252'} gap={20} size={dotSize} />
       </ReactFlow>
-      <div className="timeline"><span>{formatPeriod(board)}</span><div className="timeline-scroll" onWheel={event => { if (event.deltaY) { event.currentTarget.scrollLeft += event.deltaY; event.preventDefault() } }}><div className="timeline-days">{days.map(date => { const datedNodes = board.nodes.filter(node => node.temporal_date === date); const bookmarks = datedNodes.length < 2 ? [] : datedNodes.filter((_, index) => index % 2 === 0).slice(0, 5); const day = Number(date.slice(8)); return <i key={date}><b className="timeline-bookmarks">{bookmarks.map((node, index) => <em key={node.id} className={`timeline-bookmark ${node.type}`} style={{ bottom: index * 9 }} title={node.title || node.track_data?.title || 'Воспоминание'} />)}</b><small>{day}</small></i> })}</div></div></div>
+      <div className="timeline"><span>{formatPeriod(board, language)}</span><div className="timeline-scroll" onWheel={event => { if (event.deltaY) { event.currentTarget.scrollLeft += event.deltaY; event.preventDefault() } }}><div className="timeline-days">{days.map(date => { const datedNodes = board.nodes.filter(node => node.temporal_date === date); const bookmarks = datedNodes.length < 2 ? [] : datedNodes.filter((_, index) => index % 2 === 0).slice(0, 5); const day = Number(date.slice(8)); return <i key={date}><b className="timeline-bookmarks">{bookmarks.map((node, index) => <em key={node.id} className={`timeline-bookmark ${node.type}`} style={{ bottom: index * 9 }} title={node.title || node.track_data?.title || t('Воспоминание', 'Memory')} />)}</b><small>{day}</small></i> })}</div></div></div>
     </section>
     {selected && ['note', 'media', 'track', 'canvas_text', 'canvas_image', 'folder'].includes(selected.type) && <Editor node={selected} boardStartDate={board.start_date} boardEndDate={board.end_date} theme={theme} onClose={closeEditor} onSave={save} onRequestDelete={() => setDeleteDialog(true)} onDeleteAsset={removeAsset} onUpdateAsset={updateAsset} onReorderAssets={reorderAssets} onPreview={preview} onTextChange={object_data => objectChange(selected.id, { object_data })} onTextPreview={fontFamily => previewTextFont(selected.id, fontFamily)} onCreate={create} />}
     {contextMenu && <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}>
-      {contextMenu.edgeIds?.length ? <><p>{contextMenu.edgeIds.length > 1 ? 'Связи' : 'Связь'}</p><button className="context-danger" onClick={() => { void onEdgesDelete(edges.filter(edge => contextMenu.edgeIds?.includes(Number(edge.id)))); setContextMenu(null) }}>Удалить {contextMenu.edgeIds.length > 1 ? 'связи' : 'связь'}</button></>
-        : contextMenu.nodeIds && contextMenu.nodeIds.length > 1 ? <><p>Выбрано: {contextMenu.nodeIds.length}</p>{foldersWithContextMembers.length > 0 && <button onClick={() => { void removeContextObjectsFromFolders(); setContextMenu(null) }}>Убрать из папки</button>}{!contextFolder && contextObjects.length > 0 && <button onClick={() => { void createFolderFromSelection(contextMenu.nodeIds || []); setContextMenu(null) }}>Собрать в новую папку</button>}{contextFolder && objectsToAddToFolder.length > 0 && <button onClick={() => { void saveFolderMembers(contextFolder.id, [...folderMemberIds(contextFolder), ...objectsToAddToFolder]); setContextMenu(null) }}>Добавить в папку</button>}<button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'front'); setContextMenu(null) }}>На передний план</button><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'back'); setContextMenu(null) }}>На задний план</button><button className="context-danger" onClick={() => { setDeleteDialog(true); setContextMenu(null) }}>Удалить выбранные</button></>
-          : contextMenu.nodeId ? <>{containingFolderForContextNode && <button onClick={() => { void saveFolderMembers(containingFolderForContextNode.id, folderMemberIds(containingFolderForContextNode).filter(id => id !== contextMenu.nodeId)); setContextMenu(null) }}>Убрать из папки</button>}<button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) setClipboard(node); setContextMenu(null) }}>Копировать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) { setClipboard(node); setSelectedIds([node.id]); void remove() } setContextMenu(null) }}>Вырезать</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) void duplicate(node); setContextMenu(null) }}>Дублировать</button>{board.nodes.find(item => item.id === contextMenu.nodeId)?.type === 'folder' && <button onClick={() => { toggleFolder(contextMenu.nodeId!); setContextMenu(null) }}>{folderIsOpen(board.nodes.find(item => item.id === contextMenu.nodeId)!) ? 'Закрыть папку' : 'Открыть папку'}</button>}{board.nodes.find(item => item.id === contextMenu.nodeId)?.type === 'canvas_image' && <><button onClick={() => { toggleImageFlip(contextMenu.nodeId!, 'flip_x'); setContextMenu(null) }}>Отзеркалить по горизонтали</button><button onClick={() => { toggleImageFlip(contextMenu.nodeId!, 'flip_y'); setContextMenu(null) }}>Отзеркалить по вертикали</button></>}<button onClick={() => { void setLayer([contextMenu.nodeId!], 'front'); setContextMenu(null) }}>На передний план</button><button onClick={() => { void setLayer([contextMenu.nodeId!], 'back'); setContextMenu(null) }}>На задний план</button></>
-            : <>{clipboard && <button onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(clipboard.type, point, clipboard); setContextMenu(null) }}>Вставить</button>}<p>Создать</p><button onClick={() => { void create('note', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Заметку</button><button onClick={() => { void create('media', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Медиакарточку</button><button onClick={() => { void create('track', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Музыку</button><button onClick={() => { void create('canvas_text', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>Текст</button><button onClick={() => { void create('folder', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }), { title: 'Папка' }); setContextMenu(null) }}>Папку</button><button onClick={() => { pendingImagePositionRef.current = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); imageInputRef.current?.click(); setContextMenu(null) }}>Изображение</button></>}
+      {contextMenu.edgeIds?.length ? <><p>{contextMenu.edgeIds.length > 1 ? t('Связи', 'Connections') : t('Связь', 'Connection')}</p><button className="context-danger" onClick={() => { void onEdgesDelete(edges.filter(edge => contextMenu.edgeIds?.includes(Number(edge.id)))); setContextMenu(null) }}>{t('Удалить', 'Delete')} {contextMenu.edgeIds.length > 1 ? t('связи', 'connections') : t('связь', 'connection')}</button></>
+        : contextMenu.nodeIds && contextMenu.nodeIds.length > 1 ? <><p>{t('Выбрано:', 'Selected:')} {contextMenu.nodeIds.length}</p>{foldersWithContextMembers.length > 0 && <button onClick={() => { void removeContextObjectsFromFolders(); setContextMenu(null) }}>{t('Убрать из папки', 'Remove from folder')}</button>}{!contextFolder && contextObjects.length > 0 && <button onClick={() => { void createFolderFromSelection(contextMenu.nodeIds || []); setContextMenu(null) }}>{t('Собрать в новую папку', 'Create new folder')}</button>}{contextFolder && objectsToAddToFolder.length > 0 && <button onClick={() => { void saveFolderMembers(contextFolder.id, [...folderMemberIds(contextFolder), ...objectsToAddToFolder]); setContextMenu(null) }}>{t('Добавить в папку', 'Add to folder')}</button>}<button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'front'); setContextMenu(null) }}>{t('На передний план', 'Bring to front')}</button><button onClick={() => { void setLayer(contextMenu.nodeIds || [], 'back'); setContextMenu(null) }}>{t('На задний план', 'Send to back')}</button><button className="context-danger" onClick={() => { setDeleteDialog(true); setContextMenu(null) }}>{t('Удалить выбранные', 'Delete selected')}</button></>
+          : contextMenu.nodeId ? <>{containingFolderForContextNode && <button onClick={() => { void saveFolderMembers(containingFolderForContextNode.id, folderMemberIds(containingFolderForContextNode).filter(id => id !== contextMenu.nodeId)); setContextMenu(null) }}>{t('Убрать из папки', 'Remove from folder')}</button>}<button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) setClipboard(node); setContextMenu(null) }}>{t('Копировать', 'Copy')}</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) { setClipboard(node); setSelectedIds([node.id]); void remove() } setContextMenu(null) }}>{t('Вырезать', 'Cut')}</button><button onClick={() => { const node = board.nodes.find(item => item.id === contextMenu.nodeId); if (node) void duplicate(node); setContextMenu(null) }}>{t('Дублировать', 'Duplicate')}</button>{board.nodes.find(item => item.id === contextMenu.nodeId)?.type === 'folder' && <button onClick={() => { toggleFolder(contextMenu.nodeId!); setContextMenu(null) }}>{folderIsOpen(board.nodes.find(item => item.id === contextMenu.nodeId)!) ? t('Закрыть папку', 'Close folder') : t('Открыть папку', 'Open folder')}</button>}{board.nodes.find(item => item.id === contextMenu.nodeId)?.type === 'canvas_image' && <><button onClick={() => { toggleImageFlip(contextMenu.nodeId!, 'flip_x'); setContextMenu(null) }}>{t('Отзеркалить по горизонтали', 'Flip horizontally')}</button><button onClick={() => { toggleImageFlip(contextMenu.nodeId!, 'flip_y'); setContextMenu(null) }}>{t('Отзеркалить по вертикали', 'Flip vertically')}</button></>}<button onClick={() => { void setLayer([contextMenu.nodeId!], 'front'); setContextMenu(null) }}>{t('На передний план', 'Bring to front')}</button><button onClick={() => { void setLayer([contextMenu.nodeId!], 'back'); setContextMenu(null) }}>{t('На задний план', 'Send to back')}</button></>
+            : <>{clipboard && <button onClick={() => { const point = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); void create(clipboard.type, point, clipboard); setContextMenu(null) }}>{t('Вставить', 'Paste')}</button>}<p>{t('Создать', 'Create')}</p><button onClick={() => { void create('note', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>{t('Заметку', 'Note')}</button><button onClick={() => { void create('media', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>{t('Медиакарточку', 'Media card')}</button><button onClick={() => { void create('track', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>{t('Музыку', 'Music')}</button><button onClick={() => { void create('canvas_text', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y })); setContextMenu(null) }}>{t('Текст', 'Text')}</button><button onClick={() => { void create('folder', screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }), { title: t('Папка', 'Folder') }); setContextMenu(null) }}>{t('Папку', 'Folder')}</button><button onClick={() => { pendingImagePositionRef.current = screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }); imageInputRef.current?.click(); setContextMenu(null) }}>{t('Изображение', 'Image')}</button></>}
     </div>}
-    {deleteDialog && selectedIds.length > 0 && <div className="confirm-backdrop"><div className="confirm-dialog"><p className="eyebrow">Удаление</p><h2>Удалить {selectedIds.length > 1 ? 'выбранные воспоминания' : 'воспоминание'}?</h2><p>Карточки, их файлы и связи будут удалены.</p><div><button onClick={() => setDeleteDialog(false)}>Отмена</button><button ref={confirmButton} className="confirm-delete" onClick={() => { setDeleteDialog(false); void remove() }}>Подтвердить</button></div></div></div>}
+    {deleteDialog && selectedIds.length > 0 && <div className="confirm-backdrop"><div className="confirm-dialog"><p className="eyebrow">{t('Удаление', 'Delete')}</p><h2>{t('Удалить', 'Delete')} {selectedIds.length > 1 ? t('выбранные воспоминания', 'selected memories') : t('воспоминание', 'memory')}?</h2><p>{t('Карточки, их файлы и связи будут удалены.', 'Cards, their files, and connections will be deleted.')}</p><div><button onClick={() => setDeleteDialog(false)}>{t('Отмена', 'Cancel')}</button><button ref={confirmButton} className="confirm-delete" onClick={() => { setDeleteDialog(false); void remove() }}>{t('Подтвердить', 'Confirm')}</button></div></div></div>}
     {activeAsset && <div className="lightbox" onClick={() => setLightbox(null)}><button className="lightbox-close" onClick={() => setLightbox(null)}>×</button>{lightbox.assets.length > 1 && <button className="lightbox-nav prev" onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index: (current.index - 1 + current.assets.length) % current.assets.length } : current) }}>‹</button>}<div className="lightbox-content" onClick={event => event.stopPropagation()} key={activeAsset.id}>{activeAsset.mime_type.startsWith('image/') ? <img src={mediaUrl(activeAsset.storage_path)} alt={activeAsset.original_filename} /> : <video src={mediaUrl(activeAsset.storage_path)} controls autoPlay />}</div>{lightbox.assets.length > 1 && <button className="lightbox-nav next" onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index: (current.index + 1) % current.assets.length } : current) }}>›</button>}<div className="lightbox-footer"><p>{activeAsset.original_filename} {lightbox.assets.length > 1 && `• ${lightbox.index + 1}/${lightbox.assets.length}`}</p>{lightbox.assets.length > 1 && <div className="lightbox-thumbs">{lightbox.assets.map((asset, index) => <button key={asset.id} className={index === lightbox.index ? 'active' : ''} onClick={event => { event.stopPropagation(); setLightbox(current => current ? { ...current, index } : current) }}>{asset.mime_type.startsWith('image/') ? <img src={mediaUrl(asset.preview_path || asset.storage_path)} alt={asset.original_filename} /> : <video src={mediaUrl(asset.storage_path)} muted preload="metadata" />}</button>)}</div>}</div></div>}
   </main>
 }
@@ -732,12 +735,13 @@ const boardFolderIcons = Object.entries(boardFolderIconModules).map(([path, url]
     id: path,
     url,
     directory: parts.join('/'),
-    label: filename.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ') || 'Папка',
+    label: filename.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ') || 'Folder',
   }
 }).sort((left, right) => left.id.localeCompare(right.id, 'ru'))
 const defaultBoardFolderIconId = boardFolderIcons.find(icon => icon.label === 'macos blue')?.id || boardFolderIcons[0]?.id || ''
 
 function BoardHome({ onOpen, theme, onToggleTheme }: { onOpen: (id: number) => void; theme: Theme; onToggleTheme: () => void }) {
+  const { language, t } = useLocalization()
   const [boards, setBoards] = useState<Board[]>([])
   const [title, setTitle] = useState('')
   const initialDate = todayKey()
@@ -762,8 +766,8 @@ function BoardHome({ onOpen, theme, onToggleTheme }: { onOpen: (id: number) => v
     try {
       const next = await api.boards()
       setBoards(next)
-    } catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Не удалось загрузить доски') }
-  }, [])
+    } catch (loadError) { setError(loadError instanceof Error ? loadError.message : t('Не удалось загрузить доски', 'Could not load boards')) }
+  }, [t])
   useEffect(() => { void loadBoards() }, [loadBoards])
   useEffect(() => {
     if (!editingBoard) return
@@ -793,12 +797,12 @@ function BoardHome({ onOpen, theme, onToggleTheme }: { onOpen: (id: number) => v
     if (creating) return
     setCreating(true); setError('')
     try {
-      const board = await api.createBoard({ title: title.trim() || `${formatDate(startDate)} — ${formatDate(endDate)}`, start_date: startDate, end_date: endDate })
+      const board = await api.createBoard({ title: title.trim() || `${formatDate(startDate, language)} — ${formatDate(endDate, language)}`, start_date: startDate, end_date: endDate })
       setBoards(current => [board, ...current])
       setFolderIconsByBoard(current => ({ ...current, [String(board.id)]: defaultBoardFolderIconId }))
       setTitle('')
     }
-    catch (createError) { setError(createError instanceof Error ? createError.message : 'Не удалось создать доску') }
+    catch (createError) { setError(createError instanceof Error ? createError.message : t('Не удалось создать доску', 'Could not create board')) }
     finally { setCreating(false) }
   }
   const saveBoardSettings = async (event: React.FormEvent) => {
@@ -806,14 +810,14 @@ function BoardHome({ onOpen, theme, onToggleTheme }: { onOpen: (id: number) => v
     if (!editingBoard || savingSettings) return
     setSavingSettings(true); setError('')
     try {
-      const title = editingBoard.title.trim() || `${formatDate(editingBoard.start_date)} — ${formatDate(editingBoard.end_date)}`
+      const title = editingBoard.title.trim() || `${formatDate(editingBoard.start_date, language)} — ${formatDate(editingBoard.end_date, language)}`
       const saved = await api.updateBoard(editingBoard.id, { title, start_date: editingBoard.start_date, end_date: editingBoard.end_date })
       setBoards(current => current.map(board => board.id === saved.id ? { ...board, ...saved } : board))
       setFolderIconsByBoard(current => ({ ...current, [String(editingBoard.id)]: editingFolderIconId }))
       setFolderIconPickerOpen(false)
       setBoardContextMenuView('actions')
       setEditingBoard(null)
-    } catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'Не удалось сохранить настройки') }
+    } catch (saveError) { setError(saveError instanceof Error ? saveError.message : t('Не удалось сохранить настройки', 'Could not save settings')) }
     finally { setSavingSettings(false) }
   }
   const deleteBoard = async () => {
@@ -824,7 +828,7 @@ function BoardHome({ onOpen, theme, onToggleTheme }: { onOpen: (id: number) => v
       setBoards(current => current.filter(board => board.id !== boardToDelete.id))
       setFolderIconsByBoard(current => { const next = { ...current }; delete next[String(boardToDelete.id)]; return next })
       setBoardToDelete(null)
-    } catch (deleteError) { setError(deleteError instanceof Error ? deleteError.message : 'Не удалось удалить доску') }
+    } catch (deleteError) { setError(deleteError instanceof Error ? deleteError.message : t('Не удалось удалить доску', 'Could not delete board')) }
     finally { setDeletingBoard(false) }
   }
   const sortedBoards = useMemo(() => sort === 'date'
@@ -836,35 +840,35 @@ function BoardHome({ onOpen, theme, onToggleTheme }: { onOpen: (id: number) => v
     const directories = [...new Set(boardFolderIcons
       .filter(icon => icon.directory.startsWith(prefix) && icon.directory !== folderIconDirectory)
       .map(icon => icon.directory.slice(prefix.length).split('/')[0])
-      .filter(Boolean))].sort((left, right) => left.localeCompare(right, 'ru')).map(name => {
+      .filter(Boolean))].sort((left, right) => left.localeCompare(right, language)).map(name => {
       const fullPath = `${prefix}${name}`
       return { name, cover: boardFolderIcons.find(icon => icon.directory === fullPath || icon.directory.startsWith(`${fullPath}/`)) }
     })
     return { directories, icons: boardFolderIcons.filter(icon => icon.directory === folderIconDirectory) }
-  }, [folderIconDirectory])
+  }, [folderIconDirectory, language])
   return (
     <main className={`board-home theme-${theme}`}>
       <header className="home-window-bar">
         <div className="home-window-title"><span className="home-window-app-icon">◆</span><p className="home-logo">MEMORYBOX</p></div>
-        <div className="header-actions"><button className="theme-toggle" onClick={onToggleTheme} aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}>{theme === 'dark' ? '☀' : '☾'}</button></div>
+        <div className="header-actions"><LanguageSwitcher /><button className="theme-toggle" onClick={onToggleTheme} aria-label={theme === 'dark' ? t('Включить светлую тему', 'Enable light theme') : t('Включить тёмную тему', 'Enable dark theme')} title={theme === 'dark' ? t('Светлая тема', 'Light theme') : t('Тёмная тема', 'Dark theme')}>{theme === 'dark' ? '☀' : '☾'}</button></div>
       </header>
       <section className="board-home-content">
         <form className="new-board" onSubmit={createBoard}>
-          <div className="new-board-titlebar"><div className="new-board-window-controls" aria-hidden="true"><i /><i /><i /></div><span>Создание доски</span></div>
+          <div className="new-board-titlebar"><div className="new-board-window-controls" aria-hidden="true"><i /><i /><i /></div><span>{t('Создание доски', 'Create board')}</span></div>
           <div className="new-board-body">
-            <p className="eyebrow">Новая доска</p>
-            <h2>Начать новый период</h2>
-            <label>Название<input value={title} onChange={event => setTitle(event.target.value)} placeholder="Например, Поездка в Карелию" autoFocus /></label>
-            <div className="new-board-date"><label>Начало<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><label>Конец<input type="date" min={startDate} value={endDate} onChange={event => setEndDate(event.target.value)} /></label></div>
+            <p className="eyebrow">{t('Новая доска', 'New board')}</p>
+            <h2>{t('Начать новый период', 'Start a new period')}</h2>
+            <label>{t('Название', 'Title')}<input value={title} onChange={event => setTitle(event.target.value)} placeholder={t('Например, Поездка в Карелию', 'For example, Trip to Karelia')} autoFocus /></label>
+            <div className="new-board-date"><label>{t('Начало', 'Start')}<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><label>{t('Конец', 'End')}<input type="date" min={startDate} value={endDate} onChange={event => setEndDate(event.target.value)} /></label></div>
             {error && <p className="error">{error}</p>}
-            <div className="new-board-footer"><button className="new-board-submit" disabled={creating}>{creating ? 'Создаю…' : 'Создать доску'}</button></div>
+            <div className="new-board-footer"><button className="new-board-submit" disabled={creating}>{creating ? t('Создаю…', 'Creating…') : t('Создать доску', 'Create board')}</button></div>
           </div>
         </form>
         <div className="board-library">
           <div className="board-library-heading">
-            <p className="eyebrow">Ваши доски</p>
+            <p className="eyebrow">{t('Ваши доски', 'Your boards')}</p>
             <div className="board-library-controls">
-              <label>Сортировка<select value={sort} onChange={event => setSort(event.target.value as BoardSort)}><option value="date">По дате</option><option value="duration">По длительности</option></select></label>
+              <label>{t('Сортировка', 'Sort')}<select value={sort} onChange={event => setSort(event.target.value as BoardSort)}><option value="date">{t('По дате', 'By date')}</option><option value="duration">{t('По длительности', 'By duration')}</option></select></label>
               <span>{boards.length}</span>
             </div>
           </div>
@@ -884,53 +888,53 @@ function BoardHome({ onOpen, theme, onToggleTheme }: { onOpen: (id: number) => v
               setBoardContextMenuView('actions')
             }
             return <article className="board-card" key={board.id} style={folderIcon ? { backgroundImage: `url("${folderIcon.url}")` } : undefined}>
-              <button className="board-card-open" onClick={() => onOpen(board.id)} aria-label={`Открыть доску «${board.title}»`} />
+              <button className="board-card-open" onClick={() => onOpen(board.id)} aria-label={`${t('Открыть доску', 'Open board')} «${board.title}»`} />
               <div className="board-card-caption">
                 <button className="board-card-title" onClick={() => onOpen(board.id)}>{board.title}</button>
-                <button className={`board-card-settings ${editingBoard?.id === board.id ? 'active' : ''}`} aria-label={`Настроить доску «${board.title}»`} aria-pressed={editingBoard?.id === board.id} title="Настроить доску" onClick={toggleBoardContextMenu}>⚙</button>
+                <button className={`board-card-settings ${editingBoard?.id === board.id ? 'active' : ''}`} aria-label={`${t('Настроить доску', 'Edit board')} «${board.title}»`} aria-pressed={editingBoard?.id === board.id} title={t('Настроить доску', 'Edit board')} onClick={toggleBoardContextMenu}>⚙</button>
               </div>
               {editingBoard?.id === board.id && <form className="board-context-menu" onSubmit={saveBoardSettings}>
                 {boardContextMenuView === 'actions' && <>
-                  <p>Доска</p>
-                  <button type="button" className="board-context-menu-item" onClick={() => setBoardContextMenuView('title')}>Изменить название</button>
-                  <button type="button" className="board-context-menu-item" onClick={() => setBoardContextMenuView('period')}>Изменить период</button>
-                  <button type="button" className="board-context-menu-item" onClick={() => { setFolderIconPickerOpen(true); setFolderIconDirectory(''); setBoardContextMenuView('icon') }}>Изменить иконку</button>
+                  <p>{t('Доска', 'Board')}</p>
+                  <button type="button" className="board-context-menu-item" onClick={() => setBoardContextMenuView('title')}>{t('Изменить название', 'Edit title')}</button>
+                  <button type="button" className="board-context-menu-item" onClick={() => setBoardContextMenuView('period')}>{t('Изменить период', 'Edit period')}</button>
+                  <button type="button" className="board-context-menu-item" onClick={() => { setFolderIconPickerOpen(true); setFolderIconDirectory(''); setBoardContextMenuView('icon') }}>{t('Изменить иконку', 'Change icon')}</button>
                   <span className="board-context-menu-divider" />
-                  <button type="button" className="board-context-menu-item danger" onClick={() => { setBoardToDelete(editingBoard); setEditingBoard(null); setFolderIconPickerOpen(false); setBoardContextMenuView('actions') }}>Удалить доску</button>
+                  <button type="button" className="board-context-menu-item danger" onClick={() => { setBoardToDelete(editingBoard); setEditingBoard(null); setFolderIconPickerOpen(false); setBoardContextMenuView('actions') }}>{t('Удалить доску', 'Delete board')}</button>
                 </>}
                 {boardContextMenuView === 'title' && <>
-                  <button type="button" className="board-context-menu-back" onClick={resetBoardContextMenu}>← Назад</button>
-                  <label>Название<input value={editingBoard.title} onChange={event => setEditingBoard({ ...editingBoard, title: event.target.value })} autoFocus /></label>
-                  <div className="board-context-menu-actions"><button type="button" onClick={resetBoardContextMenu}>Отмена</button><button className="primary" disabled={savingSettings}>{savingSettings ? 'Сохраняю…' : 'Сохранить'}</button></div>
+                  <button type="button" className="board-context-menu-back" onClick={resetBoardContextMenu}>← {t('Назад', 'Back')}</button>
+                  <label>{t('Название', 'Title')}<input value={editingBoard.title} onChange={event => setEditingBoard({ ...editingBoard, title: event.target.value })} autoFocus /></label>
+                  <div className="board-context-menu-actions"><button type="button" onClick={resetBoardContextMenu}>{t('Отмена', 'Cancel')}</button><button className="primary" disabled={savingSettings}>{savingSettings ? t('Сохраняю…', 'Saving…') : t('Сохранить', 'Save')}</button></div>
                 </>}
                 {boardContextMenuView === 'period' && <>
-                  <button type="button" className="board-context-menu-back" onClick={resetBoardContextMenu}>← Назад</button>
-                  <div className="new-board-date"><label>Начало<input type="date" value={editingBoard.start_date} onChange={event => setEditingBoard({ ...editingBoard, start_date: event.target.value })} /></label><label>Конец<input type="date" min={editingBoard.start_date} value={editingBoard.end_date} onChange={event => setEditingBoard({ ...editingBoard, end_date: event.target.value })} /></label></div>
-                  <div className="board-context-menu-actions"><button type="button" onClick={resetBoardContextMenu}>Отмена</button><button className="primary" disabled={savingSettings}>{savingSettings ? 'Сохраняю…' : 'Сохранить'}</button></div>
+                  <button type="button" className="board-context-menu-back" onClick={resetBoardContextMenu}>← {t('Назад', 'Back')}</button>
+                  <div className="new-board-date"><label>{t('Начало', 'Start')}<input type="date" value={editingBoard.start_date} onChange={event => setEditingBoard({ ...editingBoard, start_date: event.target.value })} /></label><label>{t('Конец', 'End')}<input type="date" min={editingBoard.start_date} value={editingBoard.end_date} onChange={event => setEditingBoard({ ...editingBoard, end_date: event.target.value })} /></label></div>
+                  <div className="board-context-menu-actions"><button type="button" onClick={resetBoardContextMenu}>{t('Отмена', 'Cancel')}</button><button className="primary" disabled={savingSettings}>{savingSettings ? t('Сохраняю…', 'Saving…') : t('Сохранить', 'Save')}</button></div>
                 </>}
                 {boardContextMenuView === 'icon' && <>
-                  <button type="button" className="board-context-menu-back" onClick={resetBoardContextMenu}>← Назад</button>
-                  <p className="board-context-menu-heading">Иконка папки</p>
+                  <button type="button" className="board-context-menu-back" onClick={resetBoardContextMenu}>← {t('Назад', 'Back')}</button>
+                  <p className="board-context-menu-heading">{t('Иконка папки', 'Folder icon')}</p>
                   {folderIconPickerOpen && <div className="folder-icon-browser">
-                    {folderIconDirectory && <button type="button" className="folder-icon-back" onClick={() => setFolderIconDirectory(current => current.split('/').slice(0, -1).join('/'))}>← Назад</button>}
+                    {folderIconDirectory && <button type="button" className="folder-icon-back" onClick={() => setFolderIconDirectory(current => current.split('/').slice(0, -1).join('/'))}>← {t('Назад', 'Back')}</button>}
                     <div className="folder-icon-options">
-                      {folderIconEntries.directories.map(directory => <button type="button" key={directory.name} className="folder-icon-directory" onClick={() => setFolderIconDirectory(current => current ? `${current}/${directory.name}` : directory.name)} title={`Открыть папку «${directory.name}»`}>{directory.cover && <img src={directory.cover.url} alt="" />}<span>{directory.name}</span></button>)}
+                      {folderIconEntries.directories.map(directory => <button type="button" key={directory.name} className="folder-icon-directory" onClick={() => setFolderIconDirectory(current => current ? `${current}/${directory.name}` : directory.name)} title={`${t('Открыть папку', 'Open folder')} «${directory.name}»`}>{directory.cover && <img src={directory.cover.url} alt="" />}<span>{directory.name}</span></button>)}
                       {folderIconEntries.icons.map(icon => <button type="button" key={icon.id} className={icon.id === editingFolderIconId ? 'selected' : ''} onClick={() => setEditingFolderIconId(icon.id)} title={icon.label}><img src={icon.url} alt="" /><span>{icon.label}</span></button>)}
                     </div>
                   </div>}
-                  <div className="board-context-menu-actions"><button type="button" onClick={resetBoardContextMenu}>Отмена</button><button className="primary" disabled={savingSettings}>{savingSettings ? 'Сохраняю…' : 'Сохранить'}</button></div>
+                  <div className="board-context-menu-actions"><button type="button" onClick={resetBoardContextMenu}>{t('Отмена', 'Cancel')}</button><button className="primary" disabled={savingSettings}>{savingSettings ? t('Сохраняю…', 'Saving…') : t('Сохранить', 'Save')}</button></div>
                 </>}
               </form>}
             </article>
-          })}</div> : <p className="board-empty">Создайте первую доску — она появится здесь.</p>}
+          })}</div> : <p className="board-empty">{t('Создайте первую доску — она появится здесь.', 'Create your first board — it will appear here.')}</p>}
         </div>
       </section>
-      {boardToDelete && <div className="confirm-backdrop"><div className="confirm-dialog"><p className="eyebrow">Удаление доски</p><h2>Удалить «{boardToDelete.title}»?</h2><p>Все карточки, связи и загруженные файлы этой доски будут удалены без возможности восстановления.</p><div><button onClick={() => setBoardToDelete(null)} disabled={deletingBoard}>Отмена</button><button className="confirm-delete" onClick={() => void deleteBoard()} disabled={deletingBoard}>{deletingBoard ? 'Удаляю…' : 'Удалить доску'}</button></div></div></div>}
+      {boardToDelete && <div className="confirm-backdrop"><div className="confirm-dialog"><p className="eyebrow">{t('Удаление доски', 'Delete board')}</p><h2>{t('Удалить', 'Delete')} «{boardToDelete.title}»?</h2><p>{t('Все карточки, связи и загруженные файлы этой доски будут удалены без возможности восстановления.', 'All cards, connections, and uploaded files on this board will be permanently deleted.')}</p><div><button onClick={() => setBoardToDelete(null)} disabled={deletingBoard}>{t('Отмена', 'Cancel')}</button><button className="confirm-delete" onClick={() => void deleteBoard()} disabled={deletingBoard}>{deletingBoard ? t('Удаляю…', 'Deleting…') : t('Удалить доску', 'Delete board')}</button></div></div></div>}
     </main>
   )
 }
 
-export default function App() {
+function AppContent() {
   const [path, setPath] = useState(() => window.location.pathname)
   const [theme, setTheme] = useState<Theme>(() => window.localStorage.getItem('memorybox-theme') === 'light' ? 'light' : 'dark')
   useEffect(() => { const onPopState = () => setPath(window.location.pathname); window.addEventListener('popstate', onPopState); return () => window.removeEventListener('popstate', onPopState) }, [])
@@ -940,4 +944,8 @@ export default function App() {
   const match = path.match(/^\/boards\/(\d+)$/)
   const toggleTheme = useCallback(() => setTheme(current => current === 'dark' ? 'light' : 'dark'), [])
   return match ? <ReactFlowProvider><BoardCanvas boardId={Number(match[1])} onHome={openHome} theme={theme} onToggleTheme={toggleTheme} /></ReactFlowProvider> : <BoardHome onOpen={openBoard} theme={theme} onToggleTheme={toggleTheme} />
+}
+
+export default function App() {
+  return <LocalizationProvider><AppContent /></LocalizationProvider>
 }
